@@ -28,7 +28,17 @@ streamlit run app/dashboard.py
 Run the tests with:
 
 ```bash
+# Run all tests (requires streamlit installed for dashboard tests)
 pytest -q
+
+# Run only the audio input unit tests (does not require streamlit)
+python3 tests/test_audio_input.py
+```
+
+You can also run a live audio capture verification script to test your microphone:
+
+```bash
+python3 tests/run_audio_capture.py
 ```
 
 ## Project Structure
