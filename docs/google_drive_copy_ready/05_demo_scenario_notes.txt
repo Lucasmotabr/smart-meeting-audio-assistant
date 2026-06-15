@@ -1,0 +1,33 @@
+Demo Scenario Notes
+
+For Week 1, this folder can stay simple.
+Add materials only if someone already has them.
+
+Scenario 1: Clean Speech
+
+Expected result:
+- high audio quality
+- speech detected
+- transcript is accurate
+- AI advice says the audio condition is good
+
+Scenario 2: Keyboard Typing Noise
+
+Expected result:
+- typing noise detected
+- quality becomes medium or lower
+- AI advice recommends reducing typing or moving closer to the microphone
+
+Scenario 3: Far Distance Speech
+
+Expected result:
+- lower signal strength
+- transcript may become less accurate
+- AI advice recommends moving closer to the microphone
+
+Scenario 4: Microphone Comparison
+
+Expected result:
+- compare MEMS microphone and condenser microphone
+- show difference in signal quality and recognition stability
+

@@ -1,0 +1,24 @@
+Start Here - Team Instructions
+
+Please start here.
+
+You do not need to understand the whole project yet.
+Each person has one small module.
+
+Step 1: Open your handoff file in 02_Team_Handoffs.
+Step 2: Build only the function described in your handoff.
+Step 3: Put your code/output in your folder inside 03_Member_Work.
+Step 4: Send proof that it works. Terminal output is enough for Week 1.
+
+Week 1 goal:
+Every module works alone.
+
+Week 2 goal:
+Connect modules into the GUI.
+
+Week 3 goal:
+Polish and prepare the final demo.
+
+Important:
+Do not worry about the whole project yet. Focus only on your part.
+

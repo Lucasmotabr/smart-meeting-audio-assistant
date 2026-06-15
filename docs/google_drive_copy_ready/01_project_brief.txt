@@ -1,0 +1,47 @@
+Project Brief - Smart Meeting Audio Assistant
+
+PROJECT GOAL
+
+We are building a real-time microphone-based dashboard.
+
+The system will show:
+
+- sound activity
+- waveform
+- spectrogram
+- noise classification
+- speech transcription
+- audio quality
+- AI advice
+
+FINAL PIPELINE
+
+Microphone Input
+to Audio Stream
+to Voice Activity / Waveform / Spectrogram
+to Noise Classification
+to Speech Recognition
+to Audio Quality
+to AI Advice
+to GUI Dashboard
+
+WEEK 1 GOAL
+
+Each module works separately.
+No full integration is required yet.
+
+WEEK 2 GOAL
+
+Connect all modules into the GUI.
+
+WEEK 3 GOAL
+
+Polish the demo and prepare the final presentation.
+
+FINAL DEMO SCENARIOS
+
+1. Clean speech
+2. Keyboard typing noise
+3. Far distance speech
+4. Microphone comparison
+

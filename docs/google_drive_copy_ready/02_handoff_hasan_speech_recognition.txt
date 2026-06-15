@@ -1,0 +1,63 @@
+Hasan - Speech Recognition
+
+YOUR GOAL
+
+Convert microphone speech into text.
+
+WHAT YOU NEED TO BUILD
+
+Create a Python file:
+
+modules/speech_recognition.py
+
+Main function:
+
+def transcribe_audio(samples, sample_rate):
+    ...
+
+EXPECTED OUTPUT
+
+Return a dictionary like this:
+
+{
+    "text": "Stable transcript text here",
+    "partial_text": "Currently listening text",
+    "latency_ms": 900,
+}
+
+HOW THIS CONNECTS TO THE GUI
+
+For Week 1, returning the dictionary above is enough.
+
+For integration, this output will be converted into TranscriptState in:
+
+app/contracts.py
+
+Important fields for the GUI:
+
+- text
+- partial_text
+- latency_ms
+
+RECOMMENDED LIBRARIES
+
+- faster-whisper
+- openai-whisper
+- soundfile
+
+HOW TO PROVE IT WORKS
+
+Send:
+
+- the Python file
+- transcript output from one short recording
+- the command to run it
+- what model size you used
+
+Minimum success:
+
+- transcribe a short WAV file
+- print the recognized sentence
+
+Real-time transcription can come later if it is too hard in Week 1.
+

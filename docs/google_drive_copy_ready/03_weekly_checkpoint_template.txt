@@ -1,0 +1,21 @@
+Weekly Checkpoint Template
+
+Name:
+
+Module:
+
+What works:
+
+What does not work yet:
+
+Command to run:
+
+Libraries installed:
+
+Output format:
+
+Proof uploaded:
+Yes / No
+
+Help needed:
+

@@ -1,0 +1,27 @@
+How To Submit Your Part
+
+Upload your work into your folder in 03_Member_Work.
+
+Inside your folder, add:
+
+1. Your code file
+2. A short note explaining how to run it
+3. Proof that it works
+4. Any errors or problems
+
+File naming:
+
+member_1_audio_input.py
+member_2_visualization.py
+member_3_noise_classification.py
+member_4_speech_recognition.py
+member_5_gui_llm.py
+
+Proof can be simple for Week 1:
+
+- terminal output
+- screenshot
+- short video
+
+If your part is not finished, still upload what you have and explain what is missing.
+

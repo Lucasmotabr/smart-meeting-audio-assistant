@@ -1,0 +1,78 @@
+Lucas - GUI and LLM Advice
+
+YOUR GOAL
+
+Build the dashboard and generate advice from system state.
+
+WHAT YOU NEED TO BUILD
+
+Main files:
+
+app/dashboard.py
+app/mock_data.py
+app/contracts.py
+
+Advice function:
+
+def generate_advice(snapshot):
+    ...
+
+EXPECTED INPUT
+
+Use:
+
+- noise label
+- confidence
+- transcript
+- volume level
+- microphone type
+- quality score
+
+EXPECTED OUTPUT
+
+Return a dictionary like this:
+
+{
+    "message": "Move closer to the microphone.",
+    "source": "rule-based placeholder",
+}
+
+HOW THIS CONNECTS TO THE GUI
+
+The shared GUI data shapes are defined in:
+
+app/contracts.py
+
+The full dashboard state is called SystemSnapshot.
+
+It combines:
+
+- AudioFrame
+- VisualizationFrame
+- NoiseClassification
+- TranscriptState
+- AudioQuality
+- AdviceState
+
+For Week 1, the dashboard can use mock data.
+For Week 2, replace mock values with teammate outputs.
+
+RECOMMENDED LIBRARIES
+
+- streamlit
+- numpy
+- OpenAI, Groq, or Ollama later
+
+HOW TO PROVE IT WORKS
+
+Send:
+
+- screenshot of the dashboard
+- at least three demo scenarios
+- one advice message for each scenario
+
+Minimum success:
+
+- dashboard runs with mock data
+- voice bars, waveform, spectrogram, classification, transcript, quality, and advice panels are visible
+

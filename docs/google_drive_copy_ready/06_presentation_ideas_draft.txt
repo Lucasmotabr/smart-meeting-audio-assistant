@@ -1,0 +1,26 @@
+Presentation Ideas - Draft
+
+Possible demo story:
+
+1. Show clean speech.
+2. Add keyboard noise.
+3. Move far from the microphone.
+4. Compare two microphones.
+5. Show how AI advice explains the problem.
+
+Main message:
+
+Microphone quality, distance, and background noise affect speech recognition accuracy.
+Our dashboard helps users see the problem in real time and gives practical advice.
+
+Possible speaking order:
+
+1. Project introduction
+2. System pipeline explanation
+3. Audio input demo
+4. Visualization demo
+5. Noise classification demo
+6. Speech recognition demo
+7. GUI and AI advice demo
+8. Conclusion
+

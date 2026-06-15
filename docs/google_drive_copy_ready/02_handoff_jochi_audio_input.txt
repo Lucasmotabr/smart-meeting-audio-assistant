@@ -1,0 +1,72 @@
+Jochi - Audio Input
+
+YOUR GOAL
+
+Capture real microphone audio continuously.
+
+WHAT YOU NEED TO BUILD
+
+Create a Python file:
+
+modules/audio_input.py
+
+Main function:
+
+def get_audio_frame():
+    ...
+
+EXPECTED OUTPUT
+
+Return a dictionary like this:
+
+{
+    "samples": samples,
+    "sample_rate": 16000,
+    "rms": rms_volume,
+    "peak": peak_volume,
+    "microphone_name": "Your microphone name",
+    "microphone_type": "MEMS or Condenser or Unknown",
+}
+
+Notes:
+
+- samples should be a NumPy array
+- audio should be mono if possible
+- sample values should be between -1.0 and 1.0 if possible
+
+HOW THIS CONNECTS TO THE GUI
+
+For Week 1, returning the dictionary above is enough.
+
+For integration, this output will be converted into AudioFrame in:
+
+app/contracts.py
+
+Important fields for the GUI:
+
+- samples
+- sample_rate
+- rms
+- peak
+- microphone_name
+- microphone_type
+
+RECOMMENDED LIBRARIES
+
+- sounddevice
+- numpy
+- scipy
+
+HOW TO PROVE IT WORKS
+
+Send:
+
+- the Python file
+- the command to run it
+- terminal output showing changing volume values
+
+Minimum success:
+
+- the script records from the microphone
+- it prints RMS/volume every second
+

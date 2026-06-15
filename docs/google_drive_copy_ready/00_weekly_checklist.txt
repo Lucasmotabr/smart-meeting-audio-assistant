@@ -1,0 +1,27 @@
+Weekly Checklist
+
+WEEK 1 CHECKLIST
+
+Goal for next week:
+Each person must have their module working by itself.
+It does not need to be connected to the GUI yet.
+
+Required by next week:
+
+1. Python file or notebook for your module
+2. Command or steps to run it
+3. Terminal output, screenshot, or short video proving it works
+4. List of libraries you installed
+5. Problems/questions if something is blocked
+
+Do not spend too much time making things beautiful in Week 1.
+The important thing is that each module produces the correct output.
+
+Week 1 success means:
+
+- Audio person can capture or load audio.
+- Visualization person can show waveform/spectrogram data.
+- Classification person can output a noise label and confidence.
+- Transcription person can output recognized text.
+- GUI person can show a dashboard with mock data.
+

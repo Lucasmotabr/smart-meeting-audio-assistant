@@ -1,0 +1,59 @@
+GUI Target Layout
+
+The target GUI is a dark dashboard with purple accents.
+
+WEEK 1 GUI TARGET
+
+The GUI should run with mock data.
+It does not need real microphone/classifier/transcription data yet.
+
+Required panels:
+
+- voice activity
+- waveform
+- spectrogram
+- classification
+- transcript
+- audio quality
+- AI advice
+
+Nice if possible:
+
+- dark theme
+- purple accent color
+- scenario selector
+
+MAIN LAYOUT
+
+Left sidebar:
+
+- app name: SMAA
+- navigation
+- microphone list
+- recording status
+- system status
+
+Top header:
+
+- title: Smart Meeting Audio Assistant
+- subtitle
+- quick metrics: audio quality, signal strength, latency
+
+Main panels:
+
+- Voice Activity bars
+- Waveform
+- Spectrogram
+- Sound Classification
+- Transcription
+- Audio Quality score
+- AI Advice
+
+Bottom status bar:
+
+- system status
+- sample rate
+- chunk size
+- model status
+- current time/date
+

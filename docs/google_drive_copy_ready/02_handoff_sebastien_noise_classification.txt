@@ -1,0 +1,71 @@
+Sebastien - Noise Classification
+
+YOUR GOAL
+
+Detect the current sound environment.
+
+WHAT YOU NEED TO BUILD
+
+Create a Python file:
+
+modules/noise_classification.py
+
+Main function:
+
+def classify_noise(samples, sample_rate):
+    ...
+
+EXPECTED OUTPUT
+
+Return a dictionary like this:
+
+{
+    "label": "speech",
+    "confidence": 0.91,
+}
+
+Allowed labels:
+
+- speech
+- typing
+- clap
+- silence
+- background noise
+- unknown
+
+HOW THIS CONNECTS TO THE GUI
+
+For Week 1, returning the dictionary above is enough.
+
+For integration, this output will be converted into NoiseClassification in:
+
+app/contracts.py
+
+Important fields for the GUI:
+
+- label
+- confidence
+
+Please use only the allowed labels above.
+If the model gives a different label, convert it to the closest allowed label.
+
+RECOMMENDED LIBRARIES
+
+- tensorflow
+- tensorflow_hub
+- YAMNet
+- librosa
+
+HOW TO PROVE IT WORKS
+
+Send:
+
+- the Python file
+- sample output for at least two sounds
+- the command to run it
+
+Minimum success:
+
+- classify silence or speech
+- print a label and confidence score
+
