@@ -13,9 +13,11 @@ from PIL import Image
 
 try:
     from .contracts import NoiseLabel
+    from .live_pipeline import make_live_snapshot
     from .mock_data import make_mock_snapshot
 except ImportError:
     from contracts import NoiseLabel
+    from live_pipeline import make_live_snapshot
     from mock_data import make_mock_snapshot
 
 
@@ -67,10 +69,14 @@ def main() -> None:
 
     scenario = _scenario_from_query()
     microphone = _microphone_from_query()
-    snapshot = make_mock_snapshot(st.session_state.start_time, scenario)
-    _apply_demo_microphone(snapshot, microphone)
+    mode = _mode_from_query()
+    if mode == "live":
+        snapshot = make_live_snapshot(st.session_state.start_time)
+    else:
+        snapshot = make_mock_snapshot(st.session_state.start_time, scenario)
+        _apply_demo_microphone(snapshot, microphone)
 
-    st.markdown(_compact_html(_dashboard_html(snapshot, scenario, microphone)), unsafe_allow_html=True)
+    st.markdown(_compact_html(_dashboard_html(snapshot, scenario, microphone, mode)), unsafe_allow_html=True)
 
     time.sleep(0.8)
     st.rerun()
@@ -93,6 +99,13 @@ def _microphone_from_query() -> str:
     if microphone not in MICROPHONES:
         return "Alienware"
     return microphone
+
+
+def _mode_from_query() -> str:
+    mode = st.query_params.get("mode", "demo")
+    if mode not in {"demo", "live"}:
+        return "demo"
+    return mode
 
 
 def _inject_shell_css() -> None:
@@ -722,7 +735,7 @@ def _inject_shell_css() -> None:
     )
 
 
-def _dashboard_html(snapshot, scenario: str, microphone: str = "Alienware") -> str:
+def _dashboard_html(snapshot, scenario: str, microphone: str = "Alienware", mode: str = "demo") -> str:
     elapsed = snapshot.audio.timestamp_seconds
     signal_db = _signal_strength_db(snapshot)
     quality_color = _quality_color(snapshot.quality.level)
@@ -774,7 +787,7 @@ def _dashboard_html(snapshot, scenario: str, microphone: str = "Alienware") -> s
                 <span><span class="green">●</span> All Systems Operational</span>
                 <span>Sample Rate: {snapshot.audio.sample_rate // 1000} kHz</span>
                 <span>Chunk Size: {len(snapshot.audio.samples)}</span>
-                <span>Model Status: Mock Active</span>
+                <span>Model Status: {"Live Integration" if mode == "live" else "Mock Active"}</span>
                 <span>Time: {now.strftime("%H:%M:%S")}</span>
                 <span>Date: {now.strftime("%Y-%m-%d")}</span>
             </footer>

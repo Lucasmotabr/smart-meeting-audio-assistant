@@ -18,15 +18,28 @@ _initialized = False
 _fallback_mode = False
 _microphone_name = "Unknown Microphone"
 _microphone_type = "Unknown"
+_dependency_error = None
 
 # OS detection and dynamic import setup
 PLATFORM = sys.platform
 if PLATFORM == "darwin":
-    from . import audio_input_macos as _os_impl
-    _microphone_type = "CoreAudio (macOS)"
+    try:
+        from . import audio_input_macos as _os_impl
+        _microphone_type = "CoreAudio (macOS)"
+    except ImportError as exc:
+        logger.warning(f"macOS audio dependencies are unavailable: {exc}. Falling back to silence generator.")
+        _os_impl = None
+        _dependency_error = exc
+        _microphone_type = "Unavailable"
 elif PLATFORM.startswith("linux"):
-    from . import audio_input_ubuntu as _os_impl
-    _microphone_type = "PulseAudio (Ubuntu)"
+    try:
+        from . import audio_input_ubuntu as _os_impl
+        _microphone_type = "PulseAudio (Ubuntu)"
+    except ImportError as exc:
+        logger.warning(f"Ubuntu audio dependencies are unavailable: {exc}. Falling back to silence generator.")
+        _os_impl = None
+        _dependency_error = exc
+        _microphone_type = "Unavailable"
 else:
     logger.warning(f"Unsupported platform: {PLATFORM}. Falling back to silence generator.")
     _os_impl = None
@@ -63,9 +76,13 @@ def initialize_microphone(device_id=None, device_name=None):
         return True
 
     if _fallback_mode or _os_impl is None:
-        logger.warning("Operating in fallback mode. Initialization skipped.")
+        if _dependency_error is not None:
+            logger.warning(f"Audio dependency missing: {_dependency_error}. Initialization skipped.")
+        else:
+            logger.warning("Operating in fallback mode. Initialization skipped.")
         _microphone_name = "None (Fallback)"
         _initialized = True
+        _fallback_mode = True
         return False
 
     try:
