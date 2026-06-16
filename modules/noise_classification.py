@@ -1,15 +1,16 @@
 """
 Member 3: Noise / Sound Environment Classification
 ----------------------------------------------------
-Detects the current sound environment from an audio buffer using
+Detects the current sound environment from a live audio chunk using
 YAMNet (pretrained audio event classifier from TensorFlow Hub).
 
 Main entry point:
     classify_noise(samples, sample_rate) -> dict
-        {
-            "label": <one of the allowed labels>,
-            "confidence": <float 0-1>
-        }
+
+Input contract:
+    - samples: NumPy float32 array, mono, normalized [-1.0, 1.0]
+    - sample_rate: 16000 Hz
+    - chunk duration: ~1 second
 
 Allowed labels:
     "speech", "typing", "clap", "silence", "background noise", "unknown"
@@ -17,40 +18,35 @@ Allowed labels:
 
 import numpy as np
 
-# ----------------------------------------------------------------------
-# Lazy-loaded globals (model is loaded once, on first use)
-# ----------------------------------------------------------------------
 _model = None
 _class_names = None
 
 YAMNET_HANDLE = "https://www.kaggle.com/models/google/yamnet/TensorFlow2/yamnet/1"
-YAMNET_SAMPLE_RATE = 16000  # YAMNet expects mono 16kHz audio
+YAMNET_SAMPLE_RATE = 16000
 
-# ----------------------------------------------------------------------
-# Mapping from YAMNet's 521 AudioSet classes -> our allowed labels
-# ----------------------------------------------------------------------
 _SPEECH_KEYWORDS = [
     "speech", "narration", "conversation", "monologue", "babbling",
     "child speech", "shout", "yell", "whisper", "singing", "talk",
 ]
-
 _TYPING_KEYWORDS = [
     "typing", "computer keyboard", "typewriter", "keyboard",
+    "clicking", "click",
 ]
-
 _CLAP_KEYWORDS = [
-    "clapping", "applause", "slap, smack",
+    "clapping", "applause", "slap, smack", "hands", "tap",
 ]
-
 _SILENCE_KEYWORDS = [
     "silence",
+]
+_BACKGROUND_KEYWORDS = [
+    "inside, small room", "outside, rural or natural", "room",
+    "ambient", "noise", "hum", "buzz", "white noise",
+    "air conditioning", "ventilation",
 ]
 
 
 def _load_model():
-    """Load YAMNet model and class names (cached after first call)."""
     global _model, _class_names
-
     if _model is not None:
         return _model, _class_names
 
@@ -59,7 +55,6 @@ def _load_model():
     import csv
 
     _model = hub.load(YAMNET_HANDLE)
-
     class_map_path = _model.class_map_path().numpy().decode("utf-8")
     class_names = []
     with tf.io.gfile.GFile(class_map_path) as f:
@@ -67,106 +62,71 @@ def _load_model():
         next(reader)
         for row in reader:
             class_names.append(row[2])
-
     _class_names = class_names
     return _model, _class_names
 
 
 def _map_to_allowed_label(yamnet_label):
-    """Convert a YAMNet display-name label to one of our allowed labels."""
     label_lower = yamnet_label.lower()
-
     for kw in _SILENCE_KEYWORDS:
         if kw in label_lower:
             return "silence"
-
     for kw in _SPEECH_KEYWORDS:
         if kw in label_lower:
             return "speech"
-
     for kw in _TYPING_KEYWORDS:
         if kw in label_lower:
             return "typing"
-
     for kw in _CLAP_KEYWORDS:
         if kw in label_lower:
             return "clap"
-
+    for kw in _BACKGROUND_KEYWORDS:
+        if kw in label_lower:
+            return "background noise"
     return "background noise"
 
 
-def _resample_if_needed(samples, sample_rate, target_rate=YAMNET_SAMPLE_RATE):
-    """Resample audio to target_rate (YAMNet requires 16kHz)."""
-    if sample_rate == target_rate:
-        return samples
-
-    import librosa
-    return librosa.resample(
-        samples.astype(np.float32), orig_sr=sample_rate, target_sr=target_rate
-    )
-
-
-def _to_mono(samples):
-    """Convert stereo/multi-channel audio to mono by averaging channels."""
-    samples = np.asarray(samples, dtype=np.float32)
-    if samples.ndim > 1:
-        samples = samples.mean(axis=-1)
-    return samples
-
-
-def classify_noise(samples, sample_rate):
+def classify_noise(samples, sample_rate=16000):
     """
-    Classify the dominant sound environment in an audio buffer.
+    Classify the dominant sound in a live audio chunk.
+
+    Parameters
+    ----------
+    samples : np.ndarray
+        Float32 mono array, normalized [-1.0, 1.0], at 16000 Hz, ~1 sec.
+    sample_rate : int
+        Expected 16000 Hz. Kept as parameter for interface compatibility.
 
     Returns
     -------
-    dict
-        {"label": <str>, "confidence": <float>}
+    dict: {"label": str, "confidence": float}
     """
-    samples = np.asarray(samples)
+    samples = np.asarray(samples, dtype=np.float32)
 
     if samples.size == 0:
         return {"label": "unknown", "confidence": 0.0}
 
-    samples = _to_mono(samples)
-
-    if np.issubdtype(samples.dtype, np.integer):
-        samples = samples.astype(np.float32) / 32768.0
-    else:
-        samples = samples.astype(np.float32)
-
-    rms = float(np.sqrt(np.mean(samples ** 2))) if samples.size else 0.0
-    SILENCE_RMS_THRESHOLD = 0.003
+    # --- Silence check ---
+    rms = float(np.sqrt(np.mean(samples ** 2)))
+    SILENCE_RMS_THRESHOLD = 0.005
 
     if rms < SILENCE_RMS_THRESHOLD:
-        confidence = float(np.clip(1.0 - (rms / SILENCE_RMS_THRESHOLD), 0.0, 1.0))
-        confidence = max(confidence, 0.5)
+        confidence = float(np.clip(1.0 - (rms / SILENCE_RMS_THRESHOLD) ** 0.3, 0.5, 1.0))
         return {"label": "silence", "confidence": round(confidence, 2)}
 
-    try:
-        samples_16k = _resample_if_needed(samples, sample_rate)
-    except Exception:
-        return {"label": "unknown", "confidence": 0.0}
-
-    if samples_16k.size == 0:
-        return {"label": "unknown", "confidence": 0.0}
-
+    # --- Run YAMNet ---
     try:
         model, class_names = _load_model()
 
         import tensorflow as tf
-        waveform = tf.convert_to_tensor(samples_16k, dtype=tf.float32)
+        waveform = tf.convert_to_tensor(samples, dtype=tf.float32)
 
-        scores, embeddings, spectrogram = model(waveform)
-        scores_np = scores.numpy()
-
-        mean_scores = scores_np.mean(axis=0)
+        scores, _, _ = model(waveform)
+        mean_scores = scores.numpy().mean(axis=0)
 
         top_idx = int(np.argmax(mean_scores))
         top_score = float(mean_scores[top_idx])
-        top_label = class_names[top_idx]
-
-        mapped_label = _map_to_allowed_label(top_label)
+        mapped_label = _map_to_allowed_label(class_names[top_idx])
 
         return {
             "label": mapped_label,
@@ -175,21 +135,52 @@ def classify_noise(samples, sample_rate):
 
     except Exception as e:
         import traceback
-        print(f"[noise_classification] Error running YAMNet: {e!r}")
+        print(f"[noise_classification] Error: {e!r}")
         traceback.print_exc()
         return {"label": "unknown", "confidence": 0.0}
 
 
-if __name__ == "__main__":
-    SR = 16000
+def classify_noise_multi(samples, sample_rate=16000, min_confidence=0.2):
+    """
+    Detect multiple sound events across time in an audio buffer.
 
-    silence_samples = (np.random.randn(SR * 2) * 0.0005).astype(np.float32)
-    result_silence = classify_noise(silence_samples, SR)
-    print("Test 1 - Silence input:")
-    print(result_silence)
-    print()
+    Returns
+    -------
+    list of dicts: [{"time_sec": float, "label": str, "confidence": float}, ...]
+    """
+    samples = np.asarray(samples, dtype=np.float32)
 
-    speech_like = (np.random.randn(SR * 2) * 0.3).astype(np.float32)
-    result_speech = classify_noise(speech_like, SR)
-    print("Test 2 - Loud noise (general sound) input:")
-    print(result_speech)
+    if samples.size == 0:
+        return []
+
+    try:
+        model, class_names = _load_model()
+
+        import tensorflow as tf
+        scores, _, _ = model(tf.convert_to_tensor(samples, dtype=tf.float32))
+        scores_np = scores.numpy()
+
+        FRAME_DURATION = 0.975
+        events = []
+        prev_label = None
+
+        for i, frame_scores in enumerate(scores_np):
+            top_idx = int(np.argmax(frame_scores))
+            top_score = float(frame_scores[top_idx])
+            mapped = _map_to_allowed_label(class_names[top_idx]) if top_score >= min_confidence else "unknown"
+
+            if mapped != prev_label:
+                events.append({
+                    "time_sec": round(i * FRAME_DURATION, 2),
+                    "label": mapped,
+                    "confidence": round(top_score, 2),
+                })
+                prev_label = mapped
+
+        return events
+
+    except Exception as e:
+        import traceback
+        print(f"[noise_classification] Error in classify_noise_multi: {e!r}")
+        traceback.print_exc()
+        return []
