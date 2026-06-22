@@ -108,6 +108,8 @@ def _get_audio_frame(elapsed: float, microphone_id: str | None) -> AudioFrame:
         from modules.audio_input import get_audio_frame
 
         data = get_audio_frame(device_id=microphone_id)
+        if _is_silent_fallback(data):
+            data = _get_sounddevice_audio_frame(elapsed, microphone_id) or data
     except Exception:
         samples = np.zeros(16_000, dtype=np.float32)
         data = {
@@ -130,6 +132,74 @@ def _get_audio_frame(elapsed: float, microphone_id: str | None) -> AudioFrame:
         microphone_name=str(data.get("microphone_name", "Unknown microphone")),
         microphone_type=str(data.get("microphone_type", "Unknown")),
     )
+
+
+def _is_silent_fallback(data: dict[str, Any]) -> bool:
+    name = str(data.get("microphone_name", ""))
+    samples = np.asarray(data.get("samples", []), dtype=np.float32)
+    return (
+        "Fallback" in name
+        or str(data.get("microphone_type", "")) == "Unavailable"
+        or (samples.size > 0 and float(np.max(np.abs(samples))) == 0.0)
+    )
+
+
+def _get_sounddevice_audio_frame(elapsed: float, microphone_id: str | None) -> dict[str, Any] | None:
+    try:
+        import sounddevice as sd
+
+        devices = sd.query_devices()
+        input_devices = [
+            (idx, device)
+            for idx, device in enumerate(devices)
+            if device.get("max_input_channels", 0) > 0
+        ]
+        if not input_devices:
+            return None
+
+        selected_id = _resolve_sounddevice_id(microphone_id, input_devices)
+        selected_device = devices[selected_id]
+        sample_rate = 16_000
+        samples = sd.rec(
+            sample_rate,
+            samplerate=sample_rate,
+            channels=1,
+            dtype="float32",
+            device=selected_id,
+        )
+        sd.wait()
+        samples = np.asarray(samples, dtype=np.float32).flatten()
+
+        return {
+            "samples": samples,
+            "sample_rate": sample_rate,
+            "rms": _rms(samples),
+            "peak": _peak(samples),
+            "timestamp_seconds": elapsed,
+            "microphone_name": selected_device.get("name", f"Device {selected_id}"),
+            "microphone_type": "CoreAudio input",
+        }
+    except Exception:
+        return None
+
+
+def _resolve_sounddevice_id(
+    microphone_id: str | None,
+    input_devices: list[tuple[int, dict[str, Any]]],
+) -> int:
+    if microphone_id is not None:
+        for idx, _device in input_devices:
+            if str(idx) == str(microphone_id):
+                return idx
+    try:
+        import sounddevice as sd
+
+        default_input = int(sd.default.device[0])
+        if any(idx == default_input for idx, _device in input_devices):
+            return default_input
+    except Exception:
+        pass
+    return input_devices[0][0]
 
 
 def _build_visualization(audio: AudioFrame) -> VisualizationFrame:
