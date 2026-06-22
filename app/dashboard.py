@@ -98,10 +98,12 @@ def _scenario_from_query() -> str:
     return scenario
 
 
-def _microphone_from_query() -> str:
-    microphone = st.query_params.get("mic", "Alienware")
+def _microphone_from_query() -> str | None:
+    microphone = st.query_params.get("mic")
     if _mode_from_query() == "live":
         return microphone
+    if microphone is None:
+        return "Alienware"
     if microphone not in MICROPHONES:
         return "Alienware"
     return microphone
@@ -744,7 +746,7 @@ def _inject_shell_css() -> None:
 def _dashboard_html(
     snapshot,
     scenario: str,
-    microphone: str = "Alienware",
+    microphone: str | None = "Alienware",
     mode: str = "demo",
     live_microphones: list[dict[str, Any]] | None = None,
 ) -> str:
@@ -817,7 +819,7 @@ def _compact_html(markup: str) -> str:
 def _sidebar_html(
     snapshot,
     scenario: str,
-    microphone: str,
+    microphone: str | None,
     elapsed: float,
     mode: str,
     live_microphones: list[dict[str, Any]],
@@ -866,13 +868,14 @@ def _sidebar_html(
     """
 
 
-def _scenario_links_html(active_scenario: str, microphone: str, mode: str) -> str:
+def _scenario_links_html(active_scenario: str, microphone: str | None, mode: str) -> str:
     rows = []
     for scenario in SCENARIOS:
         active = " active" if scenario == active_scenario else ""
         mode_param = f"&mode={quote(mode)}" if mode == "live" else ""
+        mic_param = f"&mic={quote(microphone)}" if microphone else ""
         rows.append(
-            f'<a class="scenario-link{active}" href="?scenario={quote(scenario)}&mic={quote(microphone)}{mode_param}">'
+            f'<a class="scenario-link{active}" href="?scenario={quote(scenario)}{mic_param}{mode_param}">'
             f"{html.escape(scenario)}</a>"
         )
     return "".join(rows)
@@ -881,7 +884,7 @@ def _scenario_links_html(active_scenario: str, microphone: str, mode: str) -> st
 def _microphone_rows_html(
     snapshot,
     scenario: str,
-    microphone: str,
+    microphone: str | None,
     mode: str,
     live_microphones: list[dict[str, Any]],
 ) -> str:
@@ -906,7 +909,7 @@ def _microphone_rows_html(
         """
 
     rows = []
-    selected = str(microphone)
+    selected = str(microphone) if microphone is not None else ""
     for mic in live_microphones:
         key = str(mic.get("id", ""))
         name = str(mic.get("name", f"Device {key}"))

@@ -16,7 +16,8 @@ def list_microphones():
         if dev.get('max_input_channels', 0) > 0:
             input_devices.append({
                 "id": idx,
-                "name": dev.get('name', f"Device {idx}")
+                "name": dev.get('name', f"Device {idx}"),
+                "type": "CoreAudio input",
             })
     return input_devices
 
@@ -29,6 +30,7 @@ def initialize_microphone(device_id=None, device_name=None):
     selected_name = None
 
     if device_id is not None or device_name is not None:
+        requested_id = str(device_id) if device_id is not None else None
         if device_name is not None:
             # Search by substring
             for dev in devices:
@@ -40,8 +42,8 @@ def initialize_microphone(device_id=None, device_name=None):
         if selected_id is None and device_id is not None:
             # Validate ID
             for dev in devices:
-                if dev["id"] == device_id:
-                    selected_id = device_id
+                if str(dev["id"]) == requested_id:
+                    selected_id = dev["id"]
                     selected_name = dev["name"]
                     break
         
@@ -59,6 +61,9 @@ def initialize_microphone(device_id=None, device_name=None):
                     break
             if selected_name is None:
                 selected_name = f"Default Device ({default_device_idx})"
+        elif devices:
+            selected_id = devices[0]["id"]
+            selected_name = devices[0]["name"]
         else:
             raise RuntimeError("No default input device found on the system.")
 

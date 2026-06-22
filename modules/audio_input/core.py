@@ -54,7 +54,7 @@ def list_microphones():
     Returns:
         list of dict: Each dict contains 'id' and 'name' of the device.
     """
-    if _fallback_mode or _os_impl is None:
+    if _os_impl is None:
         return []
     try:
         return _os_impl.list_microphones()
@@ -135,6 +135,14 @@ def get_audio_frame(device_id=None, device_name=None):
     global _initialized, _fallback_mode
     
     # Auto-initialize with defaults if get_audio_frame is called without initialization
+    selected_changed = (
+        device_id is not None
+        and _selected_device_id is not None
+        and str(device_id) != str(_selected_device_id)
+    )
+    if selected_changed:
+        reset_microphone()
+
     if not _initialized:
         initialize_microphone(device_id=device_id, device_name=device_name)
 
