@@ -860,6 +860,11 @@ def _sidebar_html(
         <div class="side-card">
             <div class="side-title">Recording Status</div>
             <div class="live-row"><span><span class="red">●</span> LIVE</span><span class="purple">{_format_duration(elapsed)}</span></div>
+            <div class="mic-type" style="margin-top:7px;line-height:1.35;">
+                RMS: {snapshot.audio.rms:.5f}<br>
+                Peak: {snapshot.audio.peak:.5f}<br>
+                Source: {html.escape(snapshot.audio.microphone_type)}
+            </div>
         </div>
 
         <div class="side-card">

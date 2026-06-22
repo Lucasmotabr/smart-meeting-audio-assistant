@@ -104,6 +104,11 @@ def make_live_snapshot(start_time: float, microphone_id: str | None = None) -> S
 
 
 def _get_audio_frame(elapsed: float, microphone_id: str | None) -> AudioFrame:
+    if microphone_id is not None:
+        direct_data = _get_sounddevice_audio_frame(elapsed, microphone_id)
+        if direct_data is not None:
+            return _audio_frame_from_dict(direct_data, elapsed)
+
     try:
         from modules.audio_input import get_audio_frame
 
@@ -122,6 +127,10 @@ def _get_audio_frame(elapsed: float, microphone_id: str | None) -> AudioFrame:
             "microphone_type": "Unavailable",
         }
 
+    return _audio_frame_from_dict(data, elapsed)
+
+
+def _audio_frame_from_dict(data: dict[str, Any], elapsed: float) -> AudioFrame:
     samples = np.asarray(data.get("samples", np.zeros(16_000)), dtype=np.float32).flatten()
     return AudioFrame(
         samples=samples,
@@ -177,7 +186,7 @@ def _get_sounddevice_audio_frame(elapsed: float, microphone_id: str | None) -> d
             "peak": _peak(samples),
             "timestamp_seconds": elapsed,
             "microphone_name": selected_device.get("name", f"Device {selected_id}"),
-            "microphone_type": "CoreAudio input",
+            "microphone_type": "CoreAudio direct input",
         }
     except Exception:
         return None
@@ -221,7 +230,7 @@ def _build_visualization(audio: AudioFrame) -> VisualizationFrame:
 
 
 def _classify_noise(audio: AudioFrame) -> NoiseClassification:
-    if audio.rms >= 0.005 and importlib.util.find_spec("tensorflow") is None:
+    if audio.rms >= 0.0005 and importlib.util.find_spec("tensorflow") is None:
         return NoiseClassification(NoiseLabel.UNKNOWN, 0.0, 0.0)
 
     try:
