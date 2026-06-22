@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import time
 from typing import Any
 
 import numpy as np
+
+# Streamlit は実行スクリプト（app/）のディレクトリだけを sys.path に追加するため、
+# プロジェクトルートにある `modules` パッケージ（modules.vad など）を import できない。
+# ここでルートを明示的に通し、VAD・可視化・音声入力モジュールを確実に読めるようにする。
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 try:
     from .contracts import (
@@ -87,6 +95,13 @@ def make_live_snapshot(start_time: float, microphone_id: str | None = None) -> S
     elapsed = time.time() - start_time
     audio = _get_audio_frame(elapsed, microphone_id)
     visualization = _build_visualization(audio)
+    vad = _detect_voice_activity(audio)
+    vad_bars = _vad_voice_bars(audio.samples, vad["probability"])
+    visualization = VisualizationFrame(
+        waveform=visualization.waveform,
+        spectrogram=visualization.spectrogram,
+        voice_bars=vad_bars,
+    )
     classification = _classify_noise(audio)
     transcript = _transcribe_audio(audio)
     quality = _estimate_quality(audio, classification, transcript)
@@ -350,3 +365,48 @@ def _rms(samples: np.ndarray) -> float:
 
 def _peak(samples: np.ndarray) -> float:
     return float(np.max(np.abs(samples))) if samples.size else 0.0
+
+
+def _detect_voice_activity(audio: AudioFrame) -> dict[str, Any]:
+    try:
+        from modules.vad import detect_voice_activity
+
+        # 一部マイク（AMD ACP デジタルマイク等）は一定の直流バイアスを乗せて返す。
+        # ゼロ平均化してから推論しないと Silero VAD が音声を検出できない。
+        # ここはVAD推論専用の前処理で、波形・スペクトログラム表示には影響しない。
+        samples = audio.samples
+        if samples.size:
+            samples = samples - float(np.mean(samples))
+        return detect_voice_activity(samples, audio.sample_rate)
+    except Exception:
+        return {"is_speech": False, "probability": 0.0}
+
+
+def _vad_voice_bars(samples: np.ndarray, probability: float, n_bars: int = 24) -> np.ndarray:
+    """VAD 確率で周波数帯域エネルギーをゲートし、動きのある voice_bars を生成する。
+
+    対数スケールで周波数帯域を分割し、各帯域の RMS を dB 換算する。
+    """
+    if probability < 0.5 or samples.size == 0:
+        return np.zeros(n_bars, dtype=np.float32)
+
+    # 推論側と同じく DC 除去してから帯域エネルギーを計算する（表示用波形とは別系統）。
+    samples = samples - float(np.mean(samples))
+    windowed = samples * np.hanning(len(samples))
+    fft = np.abs(np.fft.rfft(windowed))
+    n_fft = len(fft)
+
+    # 対数スケールで帯域境界を生成（低周波〜ナイキスト）
+    edges = np.logspace(np.log10(1), np.log10(n_fft - 1), n_bars + 1).astype(int)
+    edges = np.clip(edges, 0, n_fft - 1)
+
+    bars = np.zeros(n_bars, dtype=np.float32)
+    for i in range(n_bars):
+        lo, hi = edges[i], edges[i + 1]
+        if lo >= hi:
+            hi = lo + 1
+        band = fft[lo:hi]
+        rms = float(np.sqrt(np.mean(band ** 2)))
+        bars[i] = max(0.0, 20 * np.log10(rms + 1e-9) + 120)  # dB、0〜120の範囲
+
+    return bars
