@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class TestAudioInputModule(unittest.TestCase):
     def setUp(self):
         # Force reload of the audio_input module to reset global state for each test
-        import modules.audio_input as ai
+        import modules.audio_input.core as ai
         importlib.reload(ai)
         self.ai = ai
 

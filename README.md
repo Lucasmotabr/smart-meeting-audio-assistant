@@ -41,6 +41,12 @@ You can also run a live audio capture verification script to test your microphon
 python3 tests/run_audio_capture.py
 ```
 
+For the current integration branch and teammate folder ownership, see:
+
+```text
+docs/integration_status.md
+```
+
 ## Project Structure
 
 ```text

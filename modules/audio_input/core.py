@@ -24,7 +24,7 @@ _dependency_error = None
 PLATFORM = sys.platform
 if PLATFORM == "darwin":
     try:
-        from . import audio_input_macos as _os_impl
+        from . import macos as _os_impl
         _microphone_type = "CoreAudio (macOS)"
     except ImportError as exc:
         logger.warning(f"macOS audio dependencies are unavailable: {exc}. Falling back to silence generator.")
@@ -33,7 +33,7 @@ if PLATFORM == "darwin":
         _microphone_type = "Unavailable"
 elif PLATFORM.startswith("linux"):
     try:
-        from . import audio_input_ubuntu as _os_impl
+        from . import ubuntu as _os_impl
         _microphone_type = "PulseAudio (Ubuntu)"
     except ImportError as exc:
         logger.warning(f"Ubuntu audio dependencies are unavailable: {exc}. Falling back to silence generator.")

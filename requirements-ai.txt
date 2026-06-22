@@ -1,0 +1,9 @@
+# Optional model dependencies for full live mode.
+# Use Python 3.11 if possible; some ML/audio packages may not support newer Python versions.
+
+librosa>=0.10
+openai-whisper
+soundfile>=0.12
+tensorflow>=2.16
+tensorflow-hub>=0.16
+
