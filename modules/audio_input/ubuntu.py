@@ -27,8 +27,7 @@ for lib_name in ["libpulse-simple.so.0", "libpulse-simple.so", "libpulse-simple.
         continue
 
 if libpulse is None:
-    # If loading fails, we will raise an error when initialize_microphone is called
-    logger.error("Could not locate libpulse-simple on this system.")
+    raise ImportError("Could not locate libpulse-simple on this system. Install with: sudo apt install libpulse0")
 
 # Define function signatures if library is loaded
 if libpulse is not None:
@@ -64,43 +63,45 @@ _simple_handle = None
 _active_device_name = None
 
 def list_microphones():
-    """Lists available input sources from pactl."""
+    """Lists available input sources from pactl, excluding monitor (loopback) sources."""
     devices = []
     try:
-        # Run pactl to list short format input sources
         res = subprocess.run(
-            ["pactl", "list", "sources", "short"],
+            ["pactl", "list", "sources"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            check=True
+            check=True,
+            env={**__import__("os").environ, "LANG": "C"},
         )
-        lines = res.stdout.strip().split("\n")
-        for line in lines:
-            parts = line.split()
-            if len(parts) >= 2:
-                dev_name = parts[1]
-                # Filter out monitor sources if desired, but keeping them for maximum compatibility
-                devices.append({
-                    "id": dev_name, # The target source name used in pa_simple_new
-                    "name": dev_name
-                })
+        current_name = None
+        current_desc = None
+        for line in res.stdout.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("Name:"):
+                current_name = stripped.split(":", 1)[1].strip()
+                current_desc = None
+            elif stripped.startswith("Description:"):
+                current_desc = stripped.split(":", 1)[1].strip()
+                if current_name and not current_name.endswith(".monitor"):
+                    devices.append({
+                        "id": current_name,
+                        "name": current_desc or current_name,
+                    })
+                current_name = None
+                current_desc = None
     except Exception as e:
         logger.warning(f"Failed to list microphones via pactl: {e}")
-    
-    # Always ensure there's at least a default option
+
     if not devices:
         devices.append({"id": "default", "name": "Default PulseAudio Source"})
-        
+
     return devices
 
 def initialize_microphone(device_id=None, device_name=None):
     """Initializes the PulseAudio simple API stream."""
     global _simple_handle, _active_device_name
     
-    if libpulse is None:
-        raise ImportError("libpulse-simple library is missing. Cannot initialize PulseAudio.")
-
     devices = list_microphones()
     selected_dev = None
 
@@ -196,6 +197,3 @@ def close_stream():
         except Exception:
             pass
 
-def __del__():
-    """Cleanup connection on destruction."""
-    close_stream()
