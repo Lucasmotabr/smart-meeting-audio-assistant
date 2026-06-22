@@ -13,11 +13,11 @@ from PIL import Image
 
 try:
     from .contracts import NoiseLabel
-    from .live_pipeline import list_live_microphones, make_live_snapshot
+    from .live_pipeline import get_audio_diagnostics, list_live_microphones, make_live_snapshot
     from .mock_data import make_mock_snapshot
 except ImportError:
     from contracts import NoiseLabel
-    from live_pipeline import list_live_microphones, make_live_snapshot
+    from live_pipeline import get_audio_diagnostics, list_live_microphones, make_live_snapshot
     from mock_data import make_mock_snapshot
 
 
@@ -71,6 +71,7 @@ def main() -> None:
     microphone = _microphone_from_query()
     mode = _mode_from_query()
     live_microphones = list_live_microphones() if mode == "live" else []
+    audio_diagnostics = get_audio_diagnostics() if mode == "live" else {}
     if mode == "live":
         snapshot = make_live_snapshot(st.session_state.start_time, microphone)
     else:
@@ -78,7 +79,7 @@ def main() -> None:
         _apply_demo_microphone(snapshot, microphone)
 
     st.markdown(
-        _compact_html(_dashboard_html(snapshot, scenario, microphone, mode, live_microphones)),
+        _compact_html(_dashboard_html(snapshot, scenario, microphone, mode, live_microphones, audio_diagnostics)),
         unsafe_allow_html=True,
     )
 
@@ -749,6 +750,7 @@ def _dashboard_html(
     microphone: str | None = "Alienware",
     mode: str = "demo",
     live_microphones: list[dict[str, Any]] | None = None,
+    audio_diagnostics: dict[str, Any] | None = None,
 ) -> str:
     elapsed = snapshot.audio.timestamp_seconds
     signal_db = _signal_strength_db(snapshot)
@@ -757,7 +759,7 @@ def _dashboard_html(
 
     return f"""
     <div class="smaa-app">
-        {_sidebar_html(snapshot, scenario, microphone, elapsed, mode, live_microphones or [])}
+        {_sidebar_html(snapshot, scenario, microphone, elapsed, mode, live_microphones or [], audio_diagnostics or {})}
         <main class="main">
             <section class="header">
                 <div>
@@ -823,6 +825,7 @@ def _sidebar_html(
     elapsed: float,
     mode: str,
     live_microphones: list[dict[str, Any]],
+    audio_diagnostics: dict[str, Any],
 ) -> str:
     return f"""
     <aside class="sidebar">
@@ -850,6 +853,7 @@ def _sidebar_html(
         <div class="side-card">
             <div class="side-title"><span>Microphone</span>{_icon("microphone", 14)}</div>
             {_microphone_rows_html(snapshot, scenario, microphone, mode, live_microphones)}
+            {_audio_diagnostics_html(audio_diagnostics) if mode == "live" else ""}
             <a class="manage-button" href="#microphones">Manage Microphones</a>
         </div>
 
@@ -931,6 +935,24 @@ def _mic_row(key: str, name: str, mic_type: str, active: bool, scenario: str, mo
         </div>
     </a>
     """
+
+
+def _audio_diagnostics_html(audio_diagnostics: dict[str, Any]) -> str:
+    if not audio_diagnostics:
+        return ""
+    sounddevice_status = "yes" if audio_diagnostics.get("sounddevice") else "no"
+    default_device = audio_diagnostics.get("default_device")
+    error = audio_diagnostics.get("error") or ""
+    rows = [
+        f"sounddevice: {sounddevice_status}",
+        f"inputs: {audio_diagnostics.get('microphone_count', 0)}",
+        f"default: {default_device}",
+    ]
+    if error:
+        rows.append(f"error: {error}")
+    return '<div class="mic-type" style="margin-top:7px;line-height:1.35;">' + "<br>".join(
+        html.escape(row) for row in rows
+    ) + "</div>"
 
 
 def _monitor_row(label: str, percent: int, suffix: str) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 import time
 from typing import Any
 
@@ -37,6 +38,27 @@ def list_live_microphones() -> list[dict[str, Any]]:
         return list_microphones()
     except Exception:
         return []
+
+
+def get_audio_diagnostics() -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "python": sys.executable,
+        "sounddevice": _has_packages("sounddevice"),
+        "microphone_count": 0,
+        "default_device": None,
+        "error": "",
+    }
+    try:
+        import sounddevice as sd
+
+        devices = sd.query_devices()
+        diagnostics["default_device"] = list(sd.default.device)
+        diagnostics["microphone_count"] = sum(
+            1 for device in devices if device.get("max_input_channels", 0) > 0
+        )
+    except Exception as exc:
+        diagnostics["error"] = str(exc)
+    return diagnostics
 
 
 def make_live_snapshot(start_time: float, microphone_id: str | None = None) -> SystemSnapshot:
