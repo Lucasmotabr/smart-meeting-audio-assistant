@@ -35,9 +35,12 @@ def list_live_microphones() -> list[dict[str, Any]]:
     try:
         from modules.audio_input import list_microphones
 
-        return list_microphones()
+        microphones = list_microphones()
+        if microphones:
+            return microphones
     except Exception:
-        return []
+        pass
+    return _list_sounddevice_microphones()
 
 
 def get_audio_diagnostics() -> dict[str, Any]:
@@ -59,6 +62,25 @@ def get_audio_diagnostics() -> dict[str, Any]:
     except Exception as exc:
         diagnostics["error"] = str(exc)
     return diagnostics
+
+
+def _list_sounddevice_microphones() -> list[dict[str, Any]]:
+    try:
+        import sounddevice as sd
+
+        microphones = []
+        for idx, device in enumerate(sd.query_devices()):
+            if device.get("max_input_channels", 0) > 0:
+                microphones.append(
+                    {
+                        "id": idx,
+                        "name": device.get("name", f"Device {idx}"),
+                        "type": f"{device.get('hostapi', 'CoreAudio')} input",
+                    }
+                )
+        return microphones
+    except Exception:
+        return []
 
 
 def make_live_snapshot(start_time: float, microphone_id: str | None = None) -> SystemSnapshot:

@@ -14,6 +14,7 @@ if not logger.handlers:
 
 # Global variables for state management
 _impl = None
+_os_impl = None
 _initialized = False
 _fallback_mode = False
 _microphone_name = "Unknown Microphone"
@@ -22,31 +23,50 @@ _dependency_error = None
 _selected_device_id = None
 _selected_device_name = None
 
-# OS detection and dynamic import setup
 PLATFORM = sys.platform
-if PLATFORM == "darwin":
-    try:
-        from . import macos as _os_impl
-        _microphone_type = "CoreAudio (macOS)"
-    except ImportError as exc:
-        logger.warning(f"macOS audio dependencies are unavailable: {exc}. Falling back to silence generator.")
-        _os_impl = None
-        _dependency_error = exc
-        _microphone_type = "Unavailable"
-elif PLATFORM.startswith("linux"):
-    try:
-        from . import ubuntu as _os_impl
-        _microphone_type = "PulseAudio (Ubuntu)"
-    except ImportError as exc:
-        logger.warning(f"Ubuntu audio dependencies are unavailable: {exc}. Falling back to silence generator.")
-        _os_impl = None
-        _dependency_error = exc
-        _microphone_type = "Unavailable"
-else:
+
+
+def _load_os_impl():
+    global _os_impl, _dependency_error, _microphone_type, _fallback_mode
+
+    if _os_impl is not None:
+        return _os_impl
+
+    if PLATFORM == "darwin":
+        try:
+            from . import macos as impl
+
+            _os_impl = impl
+            _dependency_error = None
+            _microphone_type = "CoreAudio (macOS)"
+            _fallback_mode = False
+            return _os_impl
+        except ImportError as exc:
+            _dependency_error = exc
+            _microphone_type = "Unavailable"
+            return None
+
+    if PLATFORM.startswith("linux"):
+        try:
+            from . import ubuntu as impl
+
+            _os_impl = impl
+            _dependency_error = None
+            _microphone_type = "PulseAudio (Ubuntu)"
+            _fallback_mode = False
+            return _os_impl
+        except ImportError as exc:
+            _dependency_error = exc
+            _microphone_type = "Unavailable"
+            return None
+
     logger.warning(f"Unsupported platform: {PLATFORM}. Falling back to silence generator.")
-    _os_impl = None
-    _fallback_mode = True
     _microphone_type = "None"
+    _fallback_mode = True
+    return None
+
+
+_load_os_impl()
 
 def list_microphones():
     """
@@ -54,10 +74,11 @@ def list_microphones():
     Returns:
         list of dict: Each dict contains 'id' and 'name' of the device.
     """
-    if _os_impl is None:
+    impl = _load_os_impl()
+    if impl is None:
         return []
     try:
-        return _os_impl.list_microphones()
+        return impl.list_microphones()
     except Exception as e:
         logger.error(f"Failed to list microphones: {e}")
         return []
@@ -80,7 +101,9 @@ def initialize_microphone(device_id=None, device_name=None):
             return True
         reset_microphone()
 
-    if _fallback_mode or _os_impl is None:
+    impl = _load_os_impl()
+
+    if _fallback_mode or impl is None:
         if _dependency_error is not None:
             logger.warning(f"Audio dependency missing: {_dependency_error}. Initialization skipped.")
         else:
@@ -92,7 +115,7 @@ def initialize_microphone(device_id=None, device_name=None):
 
     try:
         # Ask implementation to initialize device and return selected name/id info
-        success, active_name = _os_impl.initialize_microphone(device_id, device_name)
+        success, active_name = impl.initialize_microphone(device_id, device_name)
         if success:
             _microphone_name = active_name
             _selected_device_id = device_id
@@ -113,9 +136,10 @@ def initialize_microphone(device_id=None, device_name=None):
 def reset_microphone():
     global _initialized, _fallback_mode, _selected_device_id, _selected_device_name
 
-    if _os_impl is not None and hasattr(_os_impl, "close_stream"):
+    impl = _load_os_impl()
+    if impl is not None and hasattr(impl, "close_stream"):
         try:
-            _os_impl.close_stream()
+            impl.close_stream()
         except Exception as e:
             logger.warning(f"Failed to close microphone stream cleanly: {e}")
 
@@ -148,12 +172,14 @@ def get_audio_frame(device_id=None, device_name=None):
 
     timestamp = time.time()
 
-    if _fallback_mode or _os_impl is None:
+    impl = _load_os_impl()
+
+    if _fallback_mode or impl is None:
         return _generate_silent_frame(timestamp)
 
     try:
         # Call platform-specific audio reading logic
-        raw_samples = _os_impl.read_frame()
+        raw_samples = impl.read_frame()
         
         # Verify shape and type
         if not isinstance(raw_samples, np.ndarray):
