@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import html
-import time
 from datetime import datetime
 from io import BytesIO
 from urllib.parse import quote
@@ -70,6 +69,12 @@ def main() -> None:
     scenario = _scenario_from_query()
     microphone = _microphone_from_query()
     mode = _mode_from_query()
+
+    _dashboard_fragment(scenario, microphone, mode)
+
+
+@st.fragment(run_every=1.2)
+def _dashboard_fragment(scenario: str, microphone: str | None, mode: str) -> None:
     live_microphones = list_live_microphones() if mode == "live" else []
     audio_diagnostics = get_audio_diagnostics() if mode == "live" else {}
     if mode == "live":
@@ -82,9 +87,6 @@ def main() -> None:
         _compact_html(_dashboard_html(snapshot, scenario, microphone, mode, live_microphones, audio_diagnostics)),
         unsafe_allow_html=True,
     )
-
-    time.sleep(1.2 if mode == "live" else 0.8)
-    st.rerun()
 
 
 def _init_state() -> None:
