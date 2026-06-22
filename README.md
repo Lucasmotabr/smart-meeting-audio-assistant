@@ -25,6 +25,26 @@ pip install -r requirements.txt
 streamlit run app/dashboard.py
 ```
 
+Open the mock dashboard:
+
+```text
+http://localhost:8501
+```
+
+Open live microphone mode:
+
+```text
+http://localhost:8501/?mode=live
+```
+
+On Lucas's MacBook, the built-in microphone is usually device `1`:
+
+```text
+http://localhost:8501/?mode=live&mic=1
+```
+
+If the microphone list is different on your computer, open live mode first and select the microphone shown in the left sidebar.
+
 Run the tests with:
 
 ```bash
