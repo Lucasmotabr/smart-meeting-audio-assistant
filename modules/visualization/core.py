@@ -28,8 +28,9 @@ def build_visualization(samples, sample_rate):
 
     for start in range(0, len(analysis_samples) - frame_size + 1, hop_size):
         frame = analysis_samples[start : start + frame_size]
-        windowed_frame = frame * np.hanning(frame_size)
-        spectrum = np.abs(np.fft.rfft(windowed_frame))
+        window = np.hanning(frame_size)
+        windowed_frame = frame * window
+        spectrum = np.abs(np.fft.rfft(windowed_frame)) / max(float(np.sum(window)), 1.0)
         spectrum = np.nan_to_num(spectrum, nan=0.0, posinf=0.0, neginf=0.0)
         spectrogram_frames.append(spectrum)
 

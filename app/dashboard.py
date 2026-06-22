@@ -12,11 +12,11 @@ import streamlit as st
 from PIL import Image
 
 try:
-    from .contracts import NoiseLabel
+    from .contracts import NoiseLabel, VisualizationFrame
     from .live_pipeline import get_audio_diagnostics, list_live_microphones, make_live_snapshot
     from .mock_data import make_mock_snapshot
 except ImportError:
-    from contracts import NoiseLabel
+    from contracts import NoiseLabel, VisualizationFrame
     from live_pipeline import get_audio_diagnostics, list_live_microphones, make_live_snapshot
     from mock_data import make_mock_snapshot
 
@@ -74,6 +74,7 @@ def main() -> None:
     audio_diagnostics = get_audio_diagnostics() if mode == "live" else {}
     if mode == "live":
         snapshot = make_live_snapshot(st.session_state.start_time, microphone)
+        _apply_live_visual_history(snapshot, microphone)
     else:
         snapshot = make_mock_snapshot(st.session_state.start_time, scenario)
         _apply_demo_microphone(snapshot, microphone)
@@ -90,6 +91,36 @@ def main() -> None:
 def _init_state() -> None:
     if "start_time" not in st.session_state:
         st.session_state.start_time = time.time()
+    if "live_spectrogram_history" not in st.session_state:
+        st.session_state.live_spectrogram_history = None
+    if "live_spectrogram_mic" not in st.session_state:
+        st.session_state.live_spectrogram_mic = None
+
+
+def _apply_live_visual_history(snapshot, microphone: str | None) -> None:
+    current = np.asarray(snapshot.visualization.spectrogram, dtype=np.float32)
+    current = np.nan_to_num(current, nan=-120.0, posinf=-20.0, neginf=-120.0)
+    previous = st.session_state.live_spectrogram_history
+
+    if (
+        st.session_state.live_spectrogram_mic != microphone
+        or previous is None
+        or previous.shape[0] != current.shape[0]
+    ):
+        history = current
+    else:
+        history = np.concatenate([previous, current], axis=1)
+
+    columns_per_chunk = max(1, current.shape[1])
+    max_columns = columns_per_chunk * 30
+    history = history[:, -max_columns:]
+    st.session_state.live_spectrogram_history = history
+    st.session_state.live_spectrogram_mic = microphone
+    snapshot.visualization = VisualizationFrame(
+        waveform=snapshot.visualization.waveform,
+        spectrogram=history,
+        voice_bars=snapshot.visualization.voice_bars,
+    )
 
 
 def _scenario_from_query() -> str:
