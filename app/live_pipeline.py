@@ -104,10 +104,9 @@ def make_live_snapshot(start_time: float, microphone_id: str | None = None) -> S
 
 
 def _get_audio_frame(elapsed: float, microphone_id: str | None) -> AudioFrame:
-    if microphone_id is not None:
-        direct_data = _get_sounddevice_audio_frame(elapsed, microphone_id)
-        if direct_data is not None:
-            return _audio_frame_from_dict(direct_data, elapsed)
+    direct_data = _get_sounddevice_audio_frame(elapsed, microphone_id)
+    if direct_data is not None:
+        return _audio_frame_from_dict(direct_data, elapsed)
 
     try:
         from modules.audio_input import get_audio_frame
@@ -132,6 +131,8 @@ def _get_audio_frame(elapsed: float, microphone_id: str | None) -> AudioFrame:
 
 def _audio_frame_from_dict(data: dict[str, Any], elapsed: float) -> AudioFrame:
     samples = np.asarray(data.get("samples", np.zeros(16_000)), dtype=np.float32).flatten()
+    samples = np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
+    samples = np.clip(samples, -1.0, 1.0)
     return AudioFrame(
         samples=samples,
         sample_rate=int(data.get("sample_rate", 16_000)),

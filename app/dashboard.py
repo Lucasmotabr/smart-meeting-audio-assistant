@@ -83,7 +83,7 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    time.sleep(0.8)
+    time.sleep(1.2 if mode == "live" else 0.8)
     st.rerun()
 
 
@@ -1111,7 +1111,9 @@ def _spectrogram_svg(spectrogram: np.ndarray) -> str:
 
 
 def _spectrogram_png_data_uri(spectrogram: np.ndarray) -> str:
+    spectrogram = np.nan_to_num(spectrogram, nan=-120.0, posinf=-20.0, neginf=-120.0)
     normalized = np.clip((spectrogram + 120) / 100, 0, 1)
+    normalized = np.nan_to_num(normalized, nan=0.0, posinf=1.0, neginf=0.0)
     normalized = np.flipud(normalized)
     stops = np.linspace(0, 1, len(INFERNO))
     red = np.interp(normalized, stops, INFERNO[:, 0]).astype(np.uint8)

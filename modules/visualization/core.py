@@ -5,6 +5,8 @@ import numpy as np
 
 def build_visualization(samples, sample_rate):
     samples = np.asarray(samples, dtype=np.float32).flatten()
+    samples = np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
+    samples = np.clip(samples, -1.0, 1.0)
 
     if samples.size == 0:
         raise ValueError("Audio samples cannot be empty.")
@@ -28,6 +30,7 @@ def build_visualization(samples, sample_rate):
         frame = analysis_samples[start : start + frame_size]
         windowed_frame = frame * np.hanning(frame_size)
         spectrum = np.abs(np.fft.rfft(windowed_frame))
+        spectrum = np.nan_to_num(spectrum, nan=0.0, posinf=0.0, neginf=0.0)
         spectrogram_frames.append(spectrum)
 
         rms = np.sqrt(np.mean(frame**2))
@@ -35,6 +38,7 @@ def build_visualization(samples, sample_rate):
 
     spectrogram = np.array(spectrogram_frames).T
     spectrogram = 20 * np.log10(spectrogram + 1e-10)
+    spectrogram = np.nan_to_num(spectrogram, nan=-120.0, posinf=-20.0, neginf=-120.0)
     voice_bars = np.array(voice_bar_values)
 
     return {
@@ -42,4 +46,3 @@ def build_visualization(samples, sample_rate):
         "spectrogram": spectrogram,
         "voice_bars": voice_bars,
     }
-
