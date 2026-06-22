@@ -119,10 +119,6 @@ def make_live_snapshot(start_time: float, microphone_id: str | None = None) -> S
 
 
 def _get_audio_frame(elapsed: float, microphone_id: str | None) -> AudioFrame:
-    direct_data = _get_sounddevice_audio_frame(elapsed, microphone_id)
-    if direct_data is not None:
-        return _audio_frame_from_dict(direct_data, elapsed)
-
     try:
         from modules.audio_input import get_audio_frame
 
@@ -151,8 +147,8 @@ def _audio_frame_from_dict(data: dict[str, Any], elapsed: float) -> AudioFrame:
     return AudioFrame(
         samples=samples,
         sample_rate=int(data.get("sample_rate", 16_000)),
-        rms=float(data.get("rms", _rms(samples))),
-        peak=float(data.get("peak", _peak(samples))),
+        rms=_finite_float(data.get("rms"), _rms(samples)),
+        peak=_finite_float(data.get("peak"), _peak(samples)),
         timestamp_seconds=float(data.get("timestamp_seconds", elapsed)),
         microphone_name=str(data.get("microphone_name", "Unknown microphone")),
         microphone_type=str(data.get("microphone_type", "Unknown")),
@@ -359,12 +355,26 @@ def _clamped_float(value: Any) -> float:
         return 0.0
 
 
+def _finite_float(value: Any, fallback: float) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return result if np.isfinite(result) else fallback
+
+
 def _rms(samples: np.ndarray) -> float:
-    return float(np.sqrt(np.mean(samples**2))) if samples.size else 0.0
+    if not samples.size:
+        return 0.0
+    samples = np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
+    return float(np.sqrt(np.mean(samples**2)))
 
 
 def _peak(samples: np.ndarray) -> float:
-    return float(np.max(np.abs(samples))) if samples.size else 0.0
+    if not samples.size:
+        return 0.0
+    samples = np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
+    return float(np.max(np.abs(samples)))
 
 
 def _detect_voice_activity(audio: AudioFrame) -> dict[str, Any]:
