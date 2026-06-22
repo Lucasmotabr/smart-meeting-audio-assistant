@@ -92,8 +92,8 @@ def read_frame():
     # sounddevice returns a 2D array of shape (samples, channels). We flatten it to 1D.
     return data.flatten()
 
-def __del__():
-    """Ensure cleanup of the stream on destruction."""
+def close_stream():
+    """Close the active input stream, if one exists."""
     global _stream
     if _stream is not None:
         try:
@@ -101,3 +101,8 @@ def __del__():
             _stream.close()
         except Exception:
             pass
+        _stream = None
+
+def __del__():
+    """Ensure cleanup of the stream on destruction."""
+    close_stream()

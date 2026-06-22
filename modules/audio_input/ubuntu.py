@@ -186,7 +186,7 @@ def read_frame():
     
     return samples_float32
 
-def __del__():
+def close_stream():
     """Cleanup connection on destruction."""
     global _simple_handle
     if _simple_handle is not None and libpulse is not None:
@@ -195,3 +195,7 @@ def __del__():
             _simple_handle = None
         except Exception:
             pass
+
+def __del__():
+    """Cleanup connection on destruction."""
+    close_stream()

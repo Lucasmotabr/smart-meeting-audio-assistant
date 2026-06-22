@@ -19,6 +19,8 @@ _fallback_mode = False
 _microphone_name = "Unknown Microphone"
 _microphone_type = "Unknown"
 _dependency_error = None
+_selected_device_id = None
+_selected_device_name = None
 
 # OS detection and dynamic import setup
 PLATFORM = sys.platform
@@ -69,11 +71,14 @@ def initialize_microphone(device_id=None, device_name=None):
     Returns:
         bool: True if initialized successfully, False otherwise.
     """
-    global _impl, _initialized, _fallback_mode, _microphone_name
+    global _impl, _initialized, _fallback_mode, _microphone_name, _selected_device_id, _selected_device_name
     
     if _initialized:
-        logger.warning("Microphone is already initialized.")
-        return True
+        same_id = str(device_id) == str(_selected_device_id) if device_id is not None else _selected_device_id is None
+        same_name = device_name == _selected_device_name
+        if same_id and (device_name is None or same_name):
+            return True
+        reset_microphone()
 
     if _fallback_mode or _os_impl is None:
         if _dependency_error is not None:
@@ -90,6 +95,8 @@ def initialize_microphone(device_id=None, device_name=None):
         success, active_name = _os_impl.initialize_microphone(device_id, device_name)
         if success:
             _microphone_name = active_name
+            _selected_device_id = device_id
+            _selected_device_name = device_name
             _initialized = True
             _fallback_mode = False
             logger.info(f"Microphone initialized successfully: {active_name}")
@@ -103,7 +110,22 @@ def initialize_microphone(device_id=None, device_name=None):
         _initialized = True
         return False
 
-def get_audio_frame():
+def reset_microphone():
+    global _initialized, _fallback_mode, _selected_device_id, _selected_device_name
+
+    if _os_impl is not None and hasattr(_os_impl, "close_stream"):
+        try:
+            _os_impl.close_stream()
+        except Exception as e:
+            logger.warning(f"Failed to close microphone stream cleanly: {e}")
+
+    _initialized = False
+    _fallback_mode = False
+    _selected_device_id = None
+    _selected_device_name = None
+
+
+def get_audio_frame(device_id=None, device_name=None):
     """
     Captures approximately one second of mono audio at 16000 Hz.
     Returns:
@@ -114,7 +136,7 @@ def get_audio_frame():
     
     # Auto-initialize with defaults if get_audio_frame is called without initialization
     if not _initialized:
-        initialize_microphone()
+        initialize_microphone(device_id=device_id, device_name=device_name)
 
     timestamp = time.time()
 

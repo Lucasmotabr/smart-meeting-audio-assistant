@@ -30,9 +30,18 @@ except ImportError:
     )
 
 
-def make_live_snapshot(start_time: float) -> SystemSnapshot:
+def list_live_microphones() -> list[dict[str, Any]]:
+    try:
+        from modules.audio_input import list_microphones
+
+        return list_microphones()
+    except Exception:
+        return []
+
+
+def make_live_snapshot(start_time: float, microphone_id: str | None = None) -> SystemSnapshot:
     elapsed = time.time() - start_time
-    audio = _get_audio_frame(elapsed)
+    audio = _get_audio_frame(elapsed, microphone_id)
     visualization = _build_visualization(audio)
     classification = _classify_noise(audio)
     transcript = _transcribe_audio(audio)
@@ -50,11 +59,11 @@ def make_live_snapshot(start_time: float) -> SystemSnapshot:
     )
 
 
-def _get_audio_frame(elapsed: float) -> AudioFrame:
+def _get_audio_frame(elapsed: float, microphone_id: str | None) -> AudioFrame:
     try:
         from modules.audio_input import get_audio_frame
 
-        data = get_audio_frame()
+        data = get_audio_frame(device_id=microphone_id)
     except Exception:
         samples = np.zeros(16_000, dtype=np.float32)
         data = {

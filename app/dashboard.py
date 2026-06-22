@@ -13,11 +13,11 @@ from PIL import Image
 
 try:
     from .contracts import NoiseLabel
-    from .live_pipeline import make_live_snapshot
+    from .live_pipeline import list_live_microphones, make_live_snapshot
     from .mock_data import make_mock_snapshot
 except ImportError:
     from contracts import NoiseLabel
-    from live_pipeline import make_live_snapshot
+    from live_pipeline import list_live_microphones, make_live_snapshot
     from mock_data import make_mock_snapshot
 
 
@@ -70,13 +70,17 @@ def main() -> None:
     scenario = _scenario_from_query()
     microphone = _microphone_from_query()
     mode = _mode_from_query()
+    live_microphones = list_live_microphones() if mode == "live" else []
     if mode == "live":
-        snapshot = make_live_snapshot(st.session_state.start_time)
+        snapshot = make_live_snapshot(st.session_state.start_time, microphone)
     else:
         snapshot = make_mock_snapshot(st.session_state.start_time, scenario)
         _apply_demo_microphone(snapshot, microphone)
 
-    st.markdown(_compact_html(_dashboard_html(snapshot, scenario, microphone, mode)), unsafe_allow_html=True)
+    st.markdown(
+        _compact_html(_dashboard_html(snapshot, scenario, microphone, mode, live_microphones)),
+        unsafe_allow_html=True,
+    )
 
     time.sleep(0.8)
     st.rerun()
@@ -96,6 +100,8 @@ def _scenario_from_query() -> str:
 
 def _microphone_from_query() -> str:
     microphone = st.query_params.get("mic", "Alienware")
+    if _mode_from_query() == "live":
+        return microphone
     if microphone not in MICROPHONES:
         return "Alienware"
     return microphone
@@ -735,7 +741,13 @@ def _inject_shell_css() -> None:
     )
 
 
-def _dashboard_html(snapshot, scenario: str, microphone: str = "Alienware", mode: str = "demo") -> str:
+def _dashboard_html(
+    snapshot,
+    scenario: str,
+    microphone: str = "Alienware",
+    mode: str = "demo",
+    live_microphones: list[dict[str, Any]] | None = None,
+) -> str:
     elapsed = snapshot.audio.timestamp_seconds
     signal_db = _signal_strength_db(snapshot)
     quality_color = _quality_color(snapshot.quality.level)
@@ -743,7 +755,7 @@ def _dashboard_html(snapshot, scenario: str, microphone: str = "Alienware", mode
 
     return f"""
     <div class="smaa-app">
-        {_sidebar_html(snapshot, scenario, microphone, elapsed)}
+        {_sidebar_html(snapshot, scenario, microphone, elapsed, mode, live_microphones or [])}
         <main class="main">
             <section class="header">
                 <div>
@@ -802,7 +814,14 @@ def _compact_html(markup: str) -> str:
     return "\n".join(line.strip() for line in markup.splitlines() if line.strip())
 
 
-def _sidebar_html(snapshot, scenario: str, microphone: str, elapsed: float) -> str:
+def _sidebar_html(
+    snapshot,
+    scenario: str,
+    microphone: str,
+    elapsed: float,
+    mode: str,
+    live_microphones: list[dict[str, Any]],
+) -> str:
     return f"""
     <aside class="sidebar">
         <div class="brand">
@@ -823,14 +842,12 @@ def _sidebar_html(snapshot, scenario: str, microphone: str, elapsed: float) -> s
 
         <div class="side-card">
             <div class="side-title">Demo Scenario</div>
-            {_scenario_links_html(scenario, microphone)}
+            {_scenario_links_html(scenario, microphone, mode)}
         </div>
 
         <div class="side-card">
             <div class="side-title"><span>Microphone</span>{_icon("microphone", 14)}</div>
-            {_mic_row("Alienware", "Alienware x15", "MEMS microphone", microphone == "Alienware", scenario)}
-            {_mic_row("EarPods", "EarPods USB-C", "Condenser microphone", microphone == "EarPods", scenario)}
-            {_mic_row("BlueYeti", "Blue Yeti", "Condenser microphone", microphone == "BlueYeti", scenario)}
+            {_microphone_rows_html(snapshot, scenario, microphone, mode, live_microphones)}
             <a class="manage-button" href="#microphones">Manage Microphones</a>
         </div>
 
@@ -849,21 +866,61 @@ def _sidebar_html(snapshot, scenario: str, microphone: str, elapsed: float) -> s
     """
 
 
-def _scenario_links_html(active_scenario: str, microphone: str) -> str:
+def _scenario_links_html(active_scenario: str, microphone: str, mode: str) -> str:
     rows = []
     for scenario in SCENARIOS:
         active = " active" if scenario == active_scenario else ""
+        mode_param = f"&mode={quote(mode)}" if mode == "live" else ""
         rows.append(
-            f'<a class="scenario-link{active}" href="?scenario={quote(scenario)}&mic={quote(microphone)}">'
+            f'<a class="scenario-link{active}" href="?scenario={quote(scenario)}&mic={quote(microphone)}{mode_param}">'
             f"{html.escape(scenario)}</a>"
         )
     return "".join(rows)
 
 
-def _mic_row(key: str, name: str, mic_type: str, active: bool, scenario: str) -> str:
+def _microphone_rows_html(
+    snapshot,
+    scenario: str,
+    microphone: str,
+    mode: str,
+    live_microphones: list[dict[str, Any]],
+) -> str:
+    if mode != "live":
+        return "".join(
+            [
+                _mic_row("Alienware", "Alienware x15", "MEMS microphone", microphone == "Alienware", scenario, mode),
+                _mic_row("EarPods", "EarPods USB-C", "Condenser microphone", microphone == "EarPods", scenario, mode),
+                _mic_row("BlueYeti", "Blue Yeti", "Condenser microphone", microphone == "BlueYeti", scenario, mode),
+            ]
+        )
+
+    if not live_microphones:
+        return f"""
+        <div class="mic-row active">
+            <div class="mic-dot"></div>
+            <div>
+                <div class="mic-name">No input microphones found</div>
+                <div class="mic-type">Current path: {html.escape(snapshot.audio.microphone_type)}</div>
+            </div>
+        </div>
+        """
+
+    rows = []
+    selected = str(microphone)
+    for mic in live_microphones:
+        key = str(mic.get("id", ""))
+        name = str(mic.get("name", f"Device {key}"))
+        mic_type = str(mic.get("type", snapshot.audio.microphone_type))
+        active = key == selected or name == snapshot.audio.microphone_name
+        rows.append(_mic_row(key, name, mic_type, active, scenario, mode))
+    return "".join(rows)
+
+
+def _mic_row(key: str, name: str, mic_type: str, active: bool, scenario: str, mode: str) -> str:
     active_class = " active" if active else ""
+    mode_param = f"&mode={quote(mode)}" if mode == "live" else ""
     return f"""
-    <a class="mic-row{active_class}" href="?scenario={quote(scenario)}&mic={quote(key)}">
+    <a class="mic-row{active_class}" href="?scenario={quote(scenario)}&mic={quote(key)}{mode_param}">
         <div class="mic-dot"></div>
         <div>
             <div class="mic-name">{html.escape(name)}</div>
