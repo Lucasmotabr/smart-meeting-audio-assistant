@@ -18,10 +18,14 @@ Allowed labels:
 
 import numpy as np
 
+# Tested with: tensorflow==2.16.2, tensorflow-hub==0.16.1 (conda env: audio, Python 3.x, macOS)
+# tensorflow-macos==2.16.2 and tensorflow-metal==1.2.0 are also required on Apple Silicon.
+# YAMNet (~16 MB) is downloaded automatically by tensorflow-hub on first call — no tfhub.dev API key needed.
+
 _model = None
 _class_names = None
 
-YAMNET_HANDLE = "https://www.kaggle.com/models/google/yamnet/TensorFlow2/yamnet/1"
+YAMNET_HANDLE = "https://tfhub.dev/google/yamnet/1"
 YAMNET_SAMPLE_RATE = 16000
 
 _SPEECH_KEYWORDS = [
