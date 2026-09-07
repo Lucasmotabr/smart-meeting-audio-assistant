@@ -1,6 +1,7 @@
 import sys
 import time
 import logging
+import threading
 import numpy as np
 
 # Configure logger
@@ -22,6 +23,13 @@ _microphone_type = "Unknown"
 _dependency_error = None
 _selected_device_id = None
 _selected_device_name = None
+# The device the caller asked for, remembered even when initialization fails so a
+# later retry can reacquire THAT device instead of silently taking the default.
+# Both None means "no preference": the system default microphone is allowed.
+_requested_device_id = None
+_requested_device_name = None
+_last_retry_at = 0.0
+_audio_lock = threading.RLock()
 
 PLATFORM = sys.platform
 
@@ -92,8 +100,20 @@ def initialize_microphone(device_id=None, device_name=None):
     Returns:
         bool: True if initialized successfully, False otherwise.
     """
+    with _audio_lock:
+        return _initialize_microphone_locked(device_id=device_id, device_name=device_name)
+
+
+def _initialize_microphone_locked(device_id=None, device_name=None):
     global _impl, _initialized, _fallback_mode, _microphone_name, _selected_device_id, _selected_device_name
-    
+    global _requested_device_id, _requested_device_name
+
+    # Record the request before attempting it, so a failed explicit request is
+    # still remembered by the retry path. Calling with (None, None) is an
+    # explicit "no preference" and clears any previously requested device.
+    _requested_device_id = device_id
+    _requested_device_name = device_name
+
     if _initialized:
         same_id = str(device_id) == str(_selected_device_id) if device_id is not None else _selected_device_id is None
         same_name = device_name == _selected_device_name
@@ -136,6 +156,13 @@ def initialize_microphone(device_id=None, device_name=None):
 def reset_microphone():
     global _initialized, _fallback_mode, _selected_device_id, _selected_device_name
 
+    with _audio_lock:
+        return _reset_microphone_locked()
+
+
+def _reset_microphone_locked():
+    global _initialized, _fallback_mode, _selected_device_id, _selected_device_name
+
     impl = _load_os_impl()
     if impl is not None and hasattr(impl, "close_stream"):
         try:
@@ -156,19 +183,51 @@ def get_audio_frame(device_id=None, device_name=None):
         dict: A dictionary containing the audio samples, sample rate, RMS, peak,
               timestamp, and microphone information.
     """
-    global _initialized, _fallback_mode
-    
+    with _audio_lock:
+        return _get_audio_frame_locked(device_id=device_id, device_name=device_name)
+
+
+def _get_audio_frame_locked(device_id=None, device_name=None):
+    global _initialized, _fallback_mode, _last_retry_at
+
     # Auto-initialize with defaults if get_audio_frame is called without initialization
     selected_changed = (
-        device_id is not None
-        and _selected_device_id is not None
-        and str(device_id) != str(_selected_device_id)
+        (
+            device_id is not None
+            and _selected_device_id is not None
+            and str(device_id) != str(_selected_device_id)
+        )
+        or (
+            device_name is not None
+            and _selected_device_name is not None
+            and device_name != _selected_device_name
+        )
+        or (
+            device_name is not None
+            and _selected_device_id is not None
+            and _selected_device_name is None
+        )
+        or (
+            device_id is not None
+            and _selected_device_name is not None
+            and _selected_device_id is None
+        )
     )
     if selected_changed:
         reset_microphone()
 
+    if _fallback_mode and time.time() - _last_retry_at >= 3.0:
+        _last_retry_at = time.time()
+        reset_microphone()
+
     if not _initialized:
-        initialize_microphone(device_id=device_id, device_name=device_name)
+        # An explicit call argument wins; otherwise reacquire the device that was
+        # originally requested. Never silently substitute the default microphone
+        # for an explicitly requested one that is missing.
+        initialize_microphone(
+            device_id=device_id if device_id is not None else _requested_device_id,
+            device_name=device_name if device_name is not None else _requested_device_name,
+        )
 
     timestamp = time.time()
 

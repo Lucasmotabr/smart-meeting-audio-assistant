@@ -9,10 +9,25 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 class TestAudioInputModule(unittest.TestCase):
     def setUp(self):
-        # Force reload of the audio_input module to reset global state for each test
+        # Close anything a previous test left open BEFORE resetting Python state:
+        # reload() rewrites core's globals but leaves the native stream owned by
+        # modules.audio_input.macos alive and unreachable.
         import modules.audio_input.core as ai
+        try:
+            ai.reset_microphone()
+        except Exception:
+            pass
+
+        # Force reload of the audio_input module to reset global state for each test
         importlib.reload(ai)
         self.ai = ai
+
+    def tearDown(self):
+        # Release the native stream so it never outlives this test module.
+        try:
+            self.ai.reset_microphone()
+        except Exception:
+            pass
 
     def test_import_does_not_initialize(self):
         """Verify that importing the module does not set _initialized to True automatically."""
