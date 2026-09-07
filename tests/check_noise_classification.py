@@ -12,7 +12,7 @@ Run from the project root inside the `audio` conda env (has tensorflow):
 It verifies the reviewer's checklist:
   - YAMNet downloads + loads (first call) and is reused (no reload per frame)
   - processing time per 1-second chunk
-  - output stays {"label": str, "confidence": 0.0-1.0}
+  - output stays {"label": str, "confidence": 0.0-1.0, "scores": dict}
   - real classification for: silence, speech, typing, clap, background noise
 """
 
@@ -40,10 +40,12 @@ TEST_CASES = [
 
 
 def _check_output_shape(result):
-    assert set(result) == {"label", "confidence"}, f"Unexpected keys: {result}"
+    assert set(result) == {"label", "confidence", "scores"}, f"Unexpected keys: {result}"
     assert isinstance(result["label"], str), "label must be a string"
     conf = result["confidence"]
     assert 0.0 <= conf <= 1.0, f"confidence out of range: {conf}"
+    assert isinstance(result["scores"], dict), "scores must be a dict"
+    assert all(0.0 <= value <= 1.0 for value in result["scores"].values()), "scores out of range"
 
 
 def main():

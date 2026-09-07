@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import threading
 import time
 from typing import Any
 
@@ -14,6 +15,14 @@ import numpy as np
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
+
+_CLASSIFICATION_CACHE: dict[str, Any] = {
+    "updated_at": 0.0,
+    "rms": None,
+    "classification": None,
+}
+CLASSIFICATION_INTERVAL_SECONDS = float(os.environ.get("SMAA_CLASSIFICATION_INTERVAL_SECONDS", "1.0"))
+AI_MODEL_LOCK = threading.RLock()
 
 try:
     from .contracts import (
@@ -45,10 +54,22 @@ def list_live_microphones() -> list[dict[str, Any]]:
 
         microphones = list_microphones()
         if microphones:
-            return microphones
+            return _prioritize_microphones(microphones)
     except Exception:
         pass
-    return _list_sounddevice_microphones()
+    return _prioritize_microphones(_list_sounddevice_microphones())
+
+
+def _prioritize_microphones(microphones: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def priority(mic: dict[str, Any]) -> tuple[int, str]:
+        name = str(mic.get("name", "")).lower()
+        if any(token in name for token in ("macbook", "built-in", "internal", "pc microphone")):
+            return (0, name)
+        if any(token in name for token in ("iphone", "continuity")):
+            return (2, name)
+        return (1, name)
+
+    return sorted(microphones, key=priority)
 
 
 def get_audio_diagnostics() -> dict[str, Any]:
@@ -122,7 +143,8 @@ def _get_audio_frame(elapsed: float, microphone_id: str | None) -> AudioFrame:
     try:
         from modules.audio_input import get_audio_frame
 
-        data = get_audio_frame(device_id=microphone_id)
+        device_id, device_name = _microphone_selector(microphone_id)
+        data = get_audio_frame(device_id=device_id, device_name=device_name)
         if _is_silent_fallback(data):
             data = _get_sounddevice_audio_frame(elapsed, microphone_id) or data
     except Exception:
@@ -138,6 +160,24 @@ def _get_audio_frame(elapsed: float, microphone_id: str | None) -> AudioFrame:
         }
 
     return _audio_frame_from_dict(data, elapsed)
+
+
+def _microphone_selector(microphone_id: str | None) -> tuple[str | None, str | None]:
+    if microphone_id is None:
+        return None, None
+    value = str(microphone_id).strip()
+    if value == "":
+        return None, None
+    if value.isdigit():
+        return value, None
+    aliases = {
+        "pc": "macbook",
+        "computer": "macbook",
+        "builtin": "macbook",
+        "built-in": "macbook",
+        "internal": "macbook",
+    }
+    return None, aliases.get(value.lower(), value)
 
 
 def _audio_frame_from_dict(data: dict[str, Any], elapsed: float) -> AudioFrame:
@@ -209,6 +249,20 @@ def _resolve_sounddevice_id(
     input_devices: list[tuple[int, dict[str, Any]]],
 ) -> int:
     if microphone_id is not None:
+        selector = str(microphone_id).strip().lower()
+        aliases = {
+            "pc": ("macbook", "built-in", "internal"),
+            "computer": ("macbook", "built-in", "internal"),
+            "builtin": ("macbook", "built-in", "internal"),
+            "built-in": ("macbook", "built-in", "internal"),
+            "internal": ("macbook", "built-in", "internal"),
+        }
+        if not selector.isdigit():
+            tokens = aliases.get(selector, (selector,))
+            for idx, device in input_devices:
+                name = str(device.get("name", "")).lower()
+                if any(token in name for token in tokens) and "iphone" not in name:
+                    return idx
         for idx, _device in input_devices:
             if str(idx) == str(microphone_id):
                 return idx
@@ -242,19 +296,48 @@ def _build_visualization(audio: AudioFrame) -> VisualizationFrame:
 
 
 def _classify_noise(audio: AudioFrame) -> NoiseClassification:
+    now = time.time()
+    cached = _CLASSIFICATION_CACHE.get("classification")
+    cached_rms = _CLASSIFICATION_CACHE.get("rms")
+    if (
+        cached is not None
+        and cached_rms is not None
+        and now - float(_CLASSIFICATION_CACHE.get("updated_at", 0.0)) < CLASSIFICATION_INTERVAL_SECONDS
+        and abs(float(cached_rms) - float(audio.rms)) < 0.01
+    ):
+        return cached
+
     if audio.rms >= 0.0005 and importlib.util.find_spec("tensorflow") is None:
-        return NoiseClassification(NoiseLabel.UNKNOWN, 0.0, 0.0)
+        return NoiseClassification(NoiseLabel.UNKNOWN, 0.0, 0.0, _empty_classification_scores())
+
+    acquired = AI_MODEL_LOCK.acquire(blocking=False)
+    if not acquired:
+        if cached is not None:
+            return cached
+        return NoiseClassification(NoiseLabel.UNKNOWN, 0.0, 0.0, _empty_classification_scores())
 
     try:
-        from modules.noise_classification import classify_noise
+        try:
+            from modules.noise_classification import classify_noise
 
-        data = classify_noise(audio.samples, audio.sample_rate)
-    except Exception:
-        data = {"label": "unknown", "confidence": 0.0}
+            data = classify_noise(audio.samples, audio.sample_rate)
+        except Exception:
+            data = {"label": "unknown", "confidence": 0.0}
+    finally:
+        AI_MODEL_LOCK.release()
 
     label = _noise_label(data.get("label", "unknown"))
     confidence = _clamped_float(data.get("confidence", 0.0))
-    return NoiseClassification(label, confidence, confidence)
+    scores = _classification_scores(data.get("scores"), label, confidence)
+    classification = NoiseClassification(label, confidence, confidence, scores)
+    _CLASSIFICATION_CACHE.update(
+        {
+            "updated_at": now,
+            "rms": float(audio.rms),
+            "classification": classification,
+        }
+    )
+    return classification
 
 
 def _transcribe_audio(audio: AudioFrame) -> TranscriptState:
@@ -264,22 +347,11 @@ def _transcribe_audio(audio: AudioFrame) -> TranscriptState:
             partial_text="Speech recognition dependencies are not installed.",
             latency_ms=None,
         )
-
-    try:
-        from modules.speech_recognition import transcribe_audio
-
-        data = transcribe_audio(audio.samples, audio.sample_rate)
-        return TranscriptState(
-            text=str(data.get("text", "")),
-            partial_text=str(data.get("partial_text", "")),
-            latency_ms=data.get("latency_ms"),
-        )
-    except Exception:
-        return TranscriptState(
-            text="",
-            partial_text="Speech recognition is unavailable.",
-            latency_ms=None,
-        )
+    return TranscriptState(
+        text="",
+        partial_text="Speech recognition is running in the dashboard background worker.",
+        latency_ms=None,
+    )
 
 
 def _estimate_quality(
@@ -344,6 +416,31 @@ def _noise_label(value: Any) -> NoiseLabel:
         return NoiseLabel.UNKNOWN
 
 
+def _empty_classification_scores() -> dict[str, float]:
+    return {
+        NoiseLabel.TYPING.value: 0.0,
+        NoiseLabel.SPEECH.value: 0.0,
+        NoiseLabel.BACKGROUND_NOISE.value: 0.0,
+        NoiseLabel.SILENCE.value: 0.0,
+        NoiseLabel.CLAP.value: 0.0,
+    }
+
+
+def _classification_scores(raw_scores: Any, label: NoiseLabel, confidence: float) -> dict[str, float]:
+    scores = _empty_classification_scores()
+    if isinstance(raw_scores, dict):
+        for key, value in raw_scores.items():
+            noise_label = _noise_label(key)
+            if noise_label.value in scores:
+                scores[noise_label.value] = _clamped_float(value)
+        total = sum(scores.values())
+        if total > 0.0:
+            return {key: value / total for key, value in scores.items()}
+    if label.value in scores:
+        scores[label.value] = confidence
+    return scores
+
+
 def _has_packages(*names: str) -> bool:
     return all(importlib.util.find_spec(name) is not None for name in names)
 
@@ -397,7 +494,7 @@ def _vad_voice_bars(samples: np.ndarray, probability: float, n_bars: int = 24) -
 
     対数スケールで周波数帯域を分割し、各帯域の RMS を dB 換算する。
     """
-    if probability < 0.5 or samples.size == 0:
+    if samples.size == 0:
         return np.zeros(n_bars, dtype=np.float32)
 
     # 推論側と同じく DC 除去してから帯域エネルギーを計算する（表示用波形とは別系統）。
@@ -419,4 +516,9 @@ def _vad_voice_bars(samples: np.ndarray, probability: float, n_bars: int = 24) -
         rms = float(np.sqrt(np.mean(band ** 2)))
         bars[i] = max(0.0, 20 * np.log10(rms + 1e-9) + 120)  # dB、0〜120の範囲
 
+    # Do not make the panel look dead just because the speech probability is below
+    # Silero's decision threshold. Keep low-level movement visible, then boost it
+    # as VAD confidence increases.
+    gate = 0.18 + 0.82 * _clamped_float(probability)
+    bars *= gate
     return bars

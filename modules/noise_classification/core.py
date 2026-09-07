@@ -27,6 +27,7 @@ _class_names = None
 
 YAMNET_HANDLE = "https://tfhub.dev/google/yamnet/1"
 YAMNET_SAMPLE_RATE = 16000
+DISPLAY_LABELS = ("speech", "typing", "clap", "silence", "background noise")
 
 _SPEECH_KEYWORDS = [
     "speech", "narration", "conversation", "monologue", "babbling",
@@ -47,6 +48,14 @@ _BACKGROUND_KEYWORDS = [
     "ambient", "noise", "hum", "buzz", "white noise",
     "air conditioning", "ventilation",
 ]
+
+_KEYWORD_GROUPS = {
+    "speech": _SPEECH_KEYWORDS,
+    "typing": _TYPING_KEYWORDS,
+    "clap": _CLAP_KEYWORDS,
+    "silence": _SILENCE_KEYWORDS,
+    "background noise": _BACKGROUND_KEYWORDS,
+}
 
 
 def _load_model():
@@ -90,6 +99,29 @@ def _map_to_allowed_label(yamnet_label):
     return "background noise"
 
 
+def _empty_scores():
+    return {label: 0.0 for label in DISPLAY_LABELS}
+
+
+def _normalise_scores(raw_scores):
+    scores = {label: max(0.0, float(raw_scores.get(label, 0.0))) for label in DISPLAY_LABELS}
+    total = sum(scores.values())
+    if total <= 0.0:
+        return _empty_scores()
+    return {label: round(value / total, 4) for label, value in scores.items()}
+
+
+def _aggregate_allowed_scores(mean_scores, class_names):
+    raw = _empty_scores()
+    for score, class_name in zip(mean_scores, class_names):
+        class_lower = class_name.lower()
+        for label, keywords in _KEYWORD_GROUPS.items():
+            if any(keyword in class_lower for keyword in keywords):
+                raw[label] += float(score)
+                break
+    return _normalise_scores(raw)
+
+
 def classify_noise(samples, sample_rate=16000):
     """
     Classify the dominant sound in a live audio chunk.
@@ -103,12 +135,12 @@ def classify_noise(samples, sample_rate=16000):
 
     Returns
     -------
-    dict: {"label": str, "confidence": float}
+    dict: {"label": str, "confidence": float, "scores": dict[str, float]}
     """
     samples = np.asarray(samples, dtype=np.float32)
 
     if samples.size == 0:
-        return {"label": "unknown", "confidence": 0.0}
+        return {"label": "unknown", "confidence": 0.0, "scores": _empty_scores()}
 
     # --- Silence check ---
     rms = float(np.sqrt(np.mean(samples ** 2)))
@@ -116,7 +148,9 @@ def classify_noise(samples, sample_rate=16000):
 
     if rms < SILENCE_RMS_THRESHOLD:
         confidence = float(np.clip(1.0 - (rms / SILENCE_RMS_THRESHOLD) ** 0.3, 0.5, 1.0))
-        return {"label": "silence", "confidence": round(confidence, 2)}
+        scores = _empty_scores()
+        scores["silence"] = 1.0
+        return {"label": "silence", "confidence": round(confidence, 2), "scores": scores}
 
     # --- Run YAMNet ---
     try:
@@ -130,18 +164,23 @@ def classify_noise(samples, sample_rate=16000):
 
         top_idx = int(np.argmax(mean_scores))
         top_score = float(mean_scores[top_idx])
-        mapped_label = _map_to_allowed_label(class_names[top_idx])
+        scores_by_label = _aggregate_allowed_scores(mean_scores, class_names)
+        if any(scores_by_label.values()):
+            mapped_label = max(scores_by_label, key=scores_by_label.get)
+        else:
+            mapped_label = _map_to_allowed_label(class_names[top_idx])
 
         return {
             "label": mapped_label,
             "confidence": round(top_score, 2),
+            "scores": scores_by_label,
         }
 
     except Exception as e:
         import traceback
         print(f"[noise_classification] Error: {e!r}")
         traceback.print_exc()
-        return {"label": "unknown", "confidence": 0.0}
+        return {"label": "unknown", "confidence": 0.0, "scores": _empty_scores()}
 
 
 def classify_noise_multi(samples, sample_rate=16000, min_confidence=0.2):

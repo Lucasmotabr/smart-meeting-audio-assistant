@@ -47,6 +47,7 @@ class NoiseClassification:
     label: NoiseLabel
     confidence: float
     smoothed_confidence: float
+    scores: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -80,4 +81,3 @@ class SystemSnapshot:
     transcript: TranscriptState
     quality: AudioQuality
     advice: AdviceState
-
