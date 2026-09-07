@@ -45,6 +45,51 @@ http://localhost:8501/?mode=live&mic=1
 
 If the microphone list is different on your computer, open live mode first and select the microphone shown in the left sidebar.
 
+## AI / Model Environment
+
+Use Python 3.11 for the model dependencies. The default Homebrew `python3` on some Macs may be Python 3.14, which is not the right target for TensorFlow/Whisper.
+
+```bash
+cd src/smart_meeting_audio_assistant
+python3.11 -m venv .venv311
+source .venv311/bin/activate
+pip install -r requirements.txt
+pip install -r requirements-ai.txt
+streamlit run app/dashboard.py
+```
+
+Open live mode with the built-in MacBook microphone:
+
+```text
+http://localhost:8501/?mode=live&mic=1
+```
+
+For the smoother no-refresh live UI, run:
+
+```bash
+python app/live_web.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8502/?mic=computer&language=auto&model=tiny
+```
+
+Use this page for live demos when possible. It keeps the browser page mounted and updates the waveform, VAD timeline, spectrogram, classification, and transcript through small API calls instead of Streamlit full-script reruns.
+
+Useful live URL options:
+
+- `mic=computer` selects the built-in MacBook/PC microphone when available. This is safer than using `mic=0`, because device indexes can change when an iPhone or USB microphone appears.
+- `language=auto`, `language=en`, or `language=ja` controls Whisper transcription language.
+- `model=tiny`, `model=base`, or `model=small` controls the Whisper model. `tiny` starts fastest; `base` and `small` can be more accurate but load more slowly.
+
+Current behavior:
+
+- VAD runs when `silero-vad` is installed.
+- Noise classification runs when TensorFlow and TensorFlow Hub are installed.
+- Speech recognition runs in the background on short chunks so the live visuals keep moving while transcript text is appended.
+
 Run the tests with:
 
 ```bash
