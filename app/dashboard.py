@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import base64
+import concurrent.futures
+import copy
 import html
+import importlib.util
 import time
 from datetime import datetime
 from io import BytesIO
@@ -12,11 +15,11 @@ import streamlit as st
 from PIL import Image
 
 try:
-    from .contracts import NoiseLabel, VisualizationFrame
+    from .contracts import NoiseLabel, TranscriptState, VisualizationFrame
     from .live_pipeline import get_audio_diagnostics, list_live_microphones, make_live_snapshot
     from .mock_data import make_mock_snapshot
 except ImportError:
-    from contracts import NoiseLabel, VisualizationFrame
+    from contracts import NoiseLabel, TranscriptState, VisualizationFrame
     from live_pipeline import get_audio_diagnostics, list_live_microphones, make_live_snapshot
     from mock_data import make_mock_snapshot
 
@@ -75,51 +78,208 @@ def main() -> None:
     if mode == "live":
         snapshot = make_live_snapshot(st.session_state.start_time, microphone)
         _apply_live_visual_history(snapshot, microphone)
+        _apply_live_transcription(snapshot, microphone)
+        info_snapshot = _live_info_snapshot(snapshot)
     else:
         snapshot = make_mock_snapshot(st.session_state.start_time, scenario)
         _apply_demo_microphone(snapshot, microphone)
+        info_snapshot = snapshot
 
     st.markdown(
-        _compact_html(_dashboard_html(snapshot, scenario, microphone, mode, live_microphones, audio_diagnostics)),
+        _compact_html(
+            _dashboard_html(
+                snapshot,
+                scenario,
+                microphone,
+                mode,
+                live_microphones,
+                audio_diagnostics,
+                info_snapshot=info_snapshot,
+            )
+        ),
         unsafe_allow_html=True,
     )
 
-    time.sleep(1.2 if mode == "live" else 0.8)
+    time.sleep(1.0 if mode == "live" else 0.8)
     st.rerun()
 
 
 def _init_state() -> None:
     if "start_time" not in st.session_state:
         st.session_state.start_time = time.time()
-    if "live_spectrogram_history" not in st.session_state:
-        st.session_state.live_spectrogram_history = None
-    if "live_spectrogram_mic" not in st.session_state:
-        st.session_state.live_spectrogram_mic = None
+    if "live_visual_history" not in st.session_state:
+        st.session_state.live_visual_history = {"mic": None, "waveform": None, "spectrogram": None, "voice_bars": None}
+    if "live_info_snapshot" not in st.session_state:
+        st.session_state.live_info_snapshot = None
+    if "live_info_updated_at" not in st.session_state:
+        st.session_state.live_info_updated_at = 0.0
+    if "transcription_executor" not in st.session_state:
+        st.session_state.transcription_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    if "transcription_future" not in st.session_state:
+        st.session_state.transcription_future = None
+    if "transcription_buffer" not in st.session_state:
+        st.session_state.transcription_buffer = np.array([], dtype=np.float32)
+    if "transcription_text" not in st.session_state:
+        st.session_state.transcription_text = ""
+    if "transcription_status" not in st.session_state:
+        st.session_state.transcription_status = "Listening..."
+    if "transcription_latency_ms" not in st.session_state:
+        st.session_state.transcription_latency_ms = None
+    if "transcription_mic" not in st.session_state:
+        st.session_state.transcription_mic = None
+    if "transcription_last_submit" not in st.session_state:
+        st.session_state.transcription_last_submit = 0.0
+
+
+def _live_info_snapshot(snapshot):
+    now = time.time()
+    previous = st.session_state.live_info_snapshot
+    transcript_changed = previous is not None and (
+        previous.transcript.text != snapshot.transcript.text
+        or previous.transcript.partial_text != snapshot.transcript.partial_text
+    )
+    if previous is None or transcript_changed or now - st.session_state.live_info_updated_at >= 3.0:
+        st.session_state.live_info_snapshot = copy.deepcopy(snapshot)
+        st.session_state.live_info_updated_at = now
+        return st.session_state.live_info_snapshot
+    return previous
+
+
+def _apply_live_transcription(snapshot, microphone: str | None) -> None:
+    if not _has_transcription_packages():
+        snapshot.transcript = TranscriptState(
+            text="",
+            partial_text="Speech recognition dependencies are not installed.",
+            latency_ms=None,
+        )
+        return
+
+    if st.session_state.transcription_mic != microphone:
+        st.session_state.transcription_buffer = np.array([], dtype=np.float32)
+        st.session_state.transcription_text = ""
+        st.session_state.transcription_status = "Listening..."
+        st.session_state.transcription_latency_ms = None
+        st.session_state.transcription_future = None
+        st.session_state.transcription_mic = microphone
+
+    future = st.session_state.transcription_future
+    if future is not None and future.done():
+        try:
+            result = future.result()
+            text = str(result.get("text", "")).strip()
+            if text:
+                current = st.session_state.transcription_text.strip()
+                st.session_state.transcription_text = f"{current}\n{text}".strip() if current else text
+                st.session_state.transcription_status = "Transcript updated."
+            else:
+                st.session_state.transcription_status = "Listening..."
+            st.session_state.transcription_latency_ms = result.get("latency_ms")
+        except Exception as exc:
+            st.session_state.transcription_status = f"Transcription error: {exc}"
+            st.session_state.transcription_latency_ms = None
+        st.session_state.transcription_future = None
+
+    samples = np.asarray(snapshot.audio.samples, dtype=np.float32).flatten()
+    samples = np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
+    if samples.size:
+        buffer = np.concatenate([st.session_state.transcription_buffer, samples])
+        max_buffer = snapshot.audio.sample_rate * 12
+        st.session_state.transcription_buffer = buffer[-max_buffer:]
+
+    now = time.time()
+    chunk_seconds = 5
+    chunk_samples = int(snapshot.audio.sample_rate * chunk_seconds)
+    future = st.session_state.transcription_future
+    buffer = st.session_state.transcription_buffer
+    can_submit = (
+        future is None
+        and buffer.size >= chunk_samples
+        and now - st.session_state.transcription_last_submit >= chunk_seconds
+    )
+    if can_submit:
+        chunk = buffer[:chunk_samples].copy()
+        st.session_state.transcription_buffer = buffer[chunk_samples:]
+        if _rms(chunk) >= 0.0025:
+            st.session_state.transcription_future = st.session_state.transcription_executor.submit(
+                _transcribe_chunk_background,
+                chunk,
+                int(snapshot.audio.sample_rate),
+            )
+            st.session_state.transcription_last_submit = now
+            st.session_state.transcription_status = "Transcribing recent speech..."
+        else:
+            st.session_state.transcription_status = "Listening for speech..."
+
+    snapshot.transcript = TranscriptState(
+        text=st.session_state.transcription_text,
+        partial_text=st.session_state.transcription_status,
+        latency_ms=st.session_state.transcription_latency_ms,
+    )
+
+
+def _transcribe_chunk_background(samples: np.ndarray, sample_rate: int) -> dict[str, object]:
+    from modules.speech_recognition import transcribe_audio
+
+    return transcribe_audio(samples, sample_rate)
+
+
+def _has_transcription_packages() -> bool:
+    return importlib.util.find_spec("whisper") is not None and importlib.util.find_spec("soundfile") is not None
+
+
+def _rms(samples: np.ndarray) -> float:
+    return float(np.sqrt(np.mean(samples ** 2))) if samples.size else 0.0
 
 
 def _apply_live_visual_history(snapshot, microphone: str | None) -> None:
-    current = np.asarray(snapshot.visualization.spectrogram, dtype=np.float32)
-    current = np.nan_to_num(current, nan=-120.0, posinf=-20.0, neginf=-120.0)
-    previous = st.session_state.live_spectrogram_history
+    sample_rate = max(1, int(snapshot.audio.sample_rate))
+    target_seconds = 30
+    max_waveform_samples = sample_rate * target_seconds
+    current_waveform = np.asarray(snapshot.visualization.waveform, dtype=np.float32).flatten()
+    current_waveform = np.nan_to_num(current_waveform, nan=0.0, posinf=0.0, neginf=0.0)
+    current_waveform = np.clip(current_waveform, -1.0, 1.0)
 
-    if (
-        st.session_state.live_spectrogram_mic != microphone
-        or previous is None
-        or previous.shape[0] != current.shape[0]
-    ):
-        history = current
+    current_spectrogram = np.asarray(snapshot.visualization.spectrogram, dtype=np.float32)
+    current_spectrogram = np.nan_to_num(current_spectrogram, nan=-120.0, posinf=-20.0, neginf=-120.0)
+
+    current_voice_bars = np.asarray(snapshot.visualization.voice_bars, dtype=np.float32).flatten()
+    current_voice_bars = np.nan_to_num(current_voice_bars, nan=0.0, posinf=0.0, neginf=0.0)
+    voice_level = float(np.percentile(current_voice_bars, 80)) if current_voice_bars.size else 0.0
+
+    history = st.session_state.live_visual_history
+    reset = (
+        history.get("mic") != microphone
+        or history.get("waveform") is None
+        or history.get("spectrogram") is None
+        or history.get("voice_bars") is None
+        or history["spectrogram"].shape[0] != current_spectrogram.shape[0]
+    )
+
+    if reset:
+        waveform_history = current_waveform
+        spectrogram_history = current_spectrogram
+        voice_history = np.asarray([voice_level], dtype=np.float32)
     else:
-        history = np.concatenate([previous, current], axis=1)
+        waveform_history = np.concatenate([history["waveform"], current_waveform])[-max_waveform_samples:]
+        spectrogram_history = np.concatenate([history["spectrogram"], current_spectrogram], axis=1)
+        voice_history = np.concatenate([history["voice_bars"], np.asarray([voice_level], dtype=np.float32)])
 
-    columns_per_chunk = max(1, current.shape[1])
-    max_columns = columns_per_chunk * 30
-    history = history[:, -max_columns:]
-    st.session_state.live_spectrogram_history = history
-    st.session_state.live_spectrogram_mic = microphone
+    columns_per_chunk = max(1, current_spectrogram.shape[1])
+    max_spectrogram_columns = columns_per_chunk * target_seconds
+    spectrogram_history = spectrogram_history[:, -max_spectrogram_columns:]
+    voice_history = voice_history[-target_seconds:]
+
+    st.session_state.live_visual_history = {
+        "mic": microphone,
+        "waveform": waveform_history,
+        "spectrogram": spectrogram_history,
+        "voice_bars": voice_history,
+    }
+
     snapshot.visualization = VisualizationFrame(
-        waveform=snapshot.visualization.waveform,
-        spectrogram=history,
-        voice_bars=snapshot.visualization.voice_bars,
+        waveform=waveform_history,
+        spectrogram=spectrogram_history,
+        voice_bars=voice_history,
     )
 
 
@@ -207,7 +367,7 @@ def _inject_shell_css() -> None:
             height: 100dvh;
             box-sizing: border-box;
             display: grid;
-            grid-template-columns: 195px minmax(0, 1fr);
+            grid-template-columns: 170px minmax(0, 1fr);
             background:
                 radial-gradient(circle at 18% 0%, rgba(168, 85, 247, 0.28), transparent 40rem),
                 radial-gradient(circle at 100% 20%, rgba(236, 72, 153, 0.08), transparent 34rem),
@@ -222,7 +382,7 @@ def _inject_shell_css() -> None:
             background: linear-gradient(180deg, rgba(7,11,26,.98), rgba(4,6,17,.98));
             padding: 14px 12px;
             display: grid;
-            grid-template-rows: auto auto auto auto auto 1fr;
+            grid-template-rows: auto auto auto auto 1fr;
             gap: 9px;
             overflow: hidden;
         }
@@ -304,23 +464,6 @@ def _inject_shell_css() -> None:
             font-size: 13px;
             font-weight: 800;
             margin-bottom: 7px;
-        }
-
-        .scenario-link {
-            display: block;
-            color: var(--muted);
-            text-decoration: none;
-            font-size: 12px;
-            border: 1px solid transparent;
-            border-radius: 9px;
-            padding: 5px 7px;
-            margin: 2px 0;
-        }
-
-        .scenario-link.active {
-            color: white;
-            border-color: rgba(168,85,247,.55);
-            background: rgba(168,85,247,.16);
         }
 
         .mic-row {
@@ -412,6 +555,7 @@ def _inject_shell_css() -> None:
             height: 100%;
             border-radius: 999px;
             background: linear-gradient(90deg, var(--purple2), var(--purple));
+            transition: width .45s ease;
         }
 
         .main {
@@ -579,6 +723,7 @@ def _inject_shell_css() -> None:
             border-radius: 4px 4px 0 0;
             background: linear-gradient(180deg, var(--purple), var(--purple2));
             box-shadow: 0 0 18px rgba(168,85,247,.32);
+            transition: height .42s ease, opacity .42s ease;
         }
 
         .listening {
@@ -666,6 +811,10 @@ def _inject_shell_css() -> None:
             background: rgba(4,7,18,.68);
             line-height: 1.55;
             font-size: 14px;
+        }
+
+        .transcript-box {
+            overflow-y: auto;
         }
 
         .advice-box {
@@ -764,7 +913,6 @@ def _inject_shell_css() -> None:
             .sidebar { padding-top: 8px; gap: 6px; }
             .brand-icon { width: 38px; height: 38px; }
             .brand-name { font-size: 25px; }
-            .scenario-link { padding: 3px 6px; }
             .mic-row { padding: 4px 6px; margin: 3px 0; }
             .content { grid-template-rows: minmax(105px,.68fr) minmax(132px,.82fr) minmax(0,1fr); }
             .advice-box { font-size: 11px; }
@@ -782,7 +930,9 @@ def _dashboard_html(
     mode: str = "demo",
     live_microphones: list[dict[str, Any]] | None = None,
     audio_diagnostics: dict[str, Any] | None = None,
+    info_snapshot=None,
 ) -> str:
+    info_snapshot = info_snapshot or snapshot
     elapsed = snapshot.audio.timestamp_seconds
     signal_db = _signal_strength_db(snapshot)
     quality_color = _quality_color(snapshot.quality.level)
@@ -790,56 +940,88 @@ def _dashboard_html(
 
     return f"""
     <div class="smaa-app">
-        {_sidebar_html(snapshot, scenario, microphone, elapsed, mode, live_microphones or [], audio_diagnostics or {})}
+            {_sidebar_html(snapshot, scenario, microphone, elapsed, mode, live_microphones or [], audio_diagnostics or {})}
         <main class="main">
-            <section class="header">
-                <div>
-                    <div class="title">Smart Meeting Audio Assistant</div>
-                    <div class="subtitle">Real-time Sound Analysis, Speech Recognition & AI Advice</div>
-                </div>
-                <div class="metrics">
-                    {_metric_html("Audio Quality", snapshot.quality.level.title(), "Overall Quality", quality_color, "wave")}
-                    {_metric_html("Signal Strength", f"{signal_db:.0f} dB", "Input Level", "green", "bars", _mini_bars(snapshot.audio.rms))}
-                    {_metric_html("Latency", f"{snapshot.transcript.latency_ms or 0} ms", "Processing Delay", "purple", "clock")}
-                </div>
-                <div class="settings-button">{_icon("settings", 17)}</div>
-            </section>
-
-            <section class="content">
-                <div class="panel voice-panel">
-                    {_panel_title("Voice Activity", live=True, icon="wave")}
-                    {_voice_bars_html(snapshot.visualization.voice_bars)}
-                    <div class="listening">{html.escape(snapshot.transcript.partial_text)}</div>
-                </div>
-
-                <div class="panel wave-panel">
-                    {_panel_title("Waveform", live=True, icon="wave")}
-                    {_waveform_svg(snapshot.visualization.waveform)}
-                </div>
-
-                <div class="panel spectrogram-panel">
-                    {_panel_title("Spectrogram", icon="spectrogram", right="Scale: Log")}
-                    {_spectrogram_svg(snapshot.visualization.spectrogram)}
-                </div>
-
-                <div class="bottom-grid">
-                    {_classification_html(snapshot)}
-                    {_transcript_html(snapshot)}
-                    {_quality_html(snapshot)}
-                    {_advice_html(snapshot)}
-                </div>
-            </section>
-
-            <footer class="footer">
-                <span><span class="green">●</span> All Systems Operational</span>
-                <span>Sample Rate: {snapshot.audio.sample_rate // 1000} kHz</span>
-                <span>Chunk Size: {len(snapshot.audio.samples)}</span>
-                <span>Model Status: {"Live Integration" if mode == "live" else "Mock Active"}</span>
-                <span>Time: {now.strftime("%H:%M:%S")}</span>
-                <span>Date: {now.strftime("%Y-%m-%d")}</span>
-            </footer>
+            {_header_html(snapshot, signal_db, quality_color)}
+            {_content_html(snapshot, info_snapshot)}
+            {_footer_html(snapshot, mode, now)}
         </main>
     </div>
+    """
+
+
+def _header_html(snapshot, signal_db: float, quality_color: str) -> str:
+    return f"""
+    <section class="header">
+        <div>
+            <div class="title">Smart Meeting Audio Assistant</div>
+            <div class="subtitle">Real-time Sound Analysis, Speech Recognition & AI Advice</div>
+        </div>
+        <div class="metrics">
+            {_metric_html("Audio Quality", snapshot.quality.level.title(), "Overall Quality", quality_color, "wave")}
+            {_metric_html("Signal Strength", f"{signal_db:.0f} dB", "Input Level", "green", "bars", _mini_bars(snapshot.audio.rms))}
+            {_metric_html("Latency", f"{snapshot.transcript.latency_ms or 0} ms", "Processing Delay", "purple", "clock")}
+        </div>
+        <div class="settings-button">{_icon("settings", 17)}</div>
+    </section>
+    """
+
+
+def _content_html(snapshot, info_snapshot) -> str:
+    return f"""
+    <section class="content">
+        {_voice_activity_panel_html(snapshot)}
+        {_waveform_panel_html(snapshot)}
+        {_spectrogram_panel_html(snapshot)}
+
+        <div class="bottom-grid">
+            {_classification_html(info_snapshot)}
+            {_transcript_html(info_snapshot)}
+            {_quality_html(info_snapshot)}
+            {_advice_html(info_snapshot)}
+        </div>
+    </section>
+    """
+
+
+def _voice_activity_panel_html(snapshot) -> str:
+    return f"""
+    <div class="panel voice-panel">
+        {_panel_title("Voice Activity Timeline", live=True, icon="wave")}
+        {_voice_bars_html(snapshot.visualization.voice_bars)}
+        <div class="listening">{html.escape(snapshot.transcript.partial_text)}</div>
+    </div>
+    """
+
+
+def _waveform_panel_html(snapshot) -> str:
+    return f"""
+    <div class="panel wave-panel">
+        {_panel_title("Waveform", live=True, icon="wave")}
+        {_waveform_svg(snapshot.visualization.waveform)}
+    </div>
+    """
+
+
+def _spectrogram_panel_html(snapshot) -> str:
+    return f"""
+    <div class="panel spectrogram-panel">
+        {_panel_title("Spectrogram", icon="spectrogram", right="Scale: Log")}
+        {_spectrogram_svg(snapshot.visualization.spectrogram)}
+    </div>
+    """
+
+
+def _footer_html(snapshot, mode: str, now: datetime) -> str:
+    return f"""
+    <footer class="footer">
+        <span><span class="green">●</span> All Systems Operational</span>
+        <span>Sample Rate: {snapshot.audio.sample_rate // 1000} kHz</span>
+        <span>Chunk Size: {len(snapshot.audio.samples)}</span>
+        <span>Model Status: {"Live Integration" if mode == "live" else "Mock Active"}</span>
+        <span>Time: {now.strftime("%H:%M:%S")}</span>
+        <span>Date: {now.strftime("%Y-%m-%d")}</span>
+    </footer>
     """
 
 
@@ -877,11 +1059,6 @@ def _sidebar_html(
         </nav>
 
         <div class="side-card">
-            <div class="side-title">Demo Scenario</div>
-            {_scenario_links_html(scenario, microphone, mode)}
-        </div>
-
-        <div class="side-card">
             <div class="side-title"><span>Microphone</span>{_icon("microphone", 14)}</div>
             {_microphone_rows_html(snapshot, scenario, microphone, mode, live_microphones)}
             {_audio_diagnostics_html(audio_diagnostics) if mode == "live" else ""}
@@ -906,19 +1083,6 @@ def _sidebar_html(
         </div>
     </aside>
     """
-
-
-def _scenario_links_html(active_scenario: str, microphone: str | None, mode: str) -> str:
-    rows = []
-    for scenario in SCENARIOS:
-        active = " active" if scenario == active_scenario else ""
-        mode_param = f"&mode={quote(mode)}" if mode == "live" else ""
-        mic_param = f"&mic={quote(microphone)}" if microphone else ""
-        rows.append(
-            f'<a class="scenario-link{active}" href="?scenario={quote(scenario)}{mic_param}{mode_param}">'
-            f"{html.escape(scenario)}</a>"
-        )
-    return "".join(rows)
 
 
 def _microphone_rows_html(
@@ -1033,16 +1197,30 @@ def _panel_title(
 
 
 def _voice_bars_html(values: np.ndarray) -> str:
-    normalized = values / max(float(values.max()), 0.001)
+    values = np.asarray(values, dtype=np.float32).flatten()
+    if values.size == 0:
+        values = np.zeros(30, dtype=np.float32)
+    if values.size < 30:
+        values = np.pad(values, (30 - values.size, 0))
+    values = values[-30:]
+    normalized = values / max(float(np.percentile(values, 95)), 0.001)
+    normalized = np.clip(normalized, 0.0, 1.0)
     bars = "".join(
         f'<div class="voice-bar" style="height:{max(8, int(value * 104))}px;"></div>'
         for value in normalized
     )
-    return f'<div class="voice-bars">{bars}</div>'
+    return f"""
+    <div class="voice-bars">{bars}</div>
+    <div class="axis-label"><span>30s ago</span><span>now</span></div>
+    """
 
 
 def _waveform_svg(waveform: np.ndarray) -> str:
-    reduced = waveform[:: max(1, len(waveform) // 180)]
+    waveform = np.asarray(waveform, dtype=np.float32).flatten()
+    waveform = np.nan_to_num(waveform, nan=0.0, posinf=0.0, neginf=0.0)
+    if waveform.size == 0:
+        waveform = np.zeros(1, dtype=np.float32)
+    reduced = waveform[:: max(1, len(waveform) // 360)]
     width = 900
     height = 170
     plot_x = 44
@@ -1050,8 +1228,10 @@ def _waveform_svg(waveform: np.ndarray) -> str:
     plot_width = 844
     plot_height = 132
     points = []
-    for index, value in enumerate(reduced[:180]):
-        x = plot_x + index / 179 * plot_width
+    reduced = reduced[-360:]
+    point_count = max(1, len(reduced) - 1)
+    for index, value in enumerate(reduced):
+        x = plot_x + index / point_count * plot_width
         y = plot_y + plot_height / 2 - float(value) * (plot_height * 0.43)
         points.append(f"{x:.1f},{y:.1f}")
     polyline = " ".join(points)
@@ -1163,7 +1343,7 @@ def _classification_html(snapshot) -> str:
     confidence = int(snapshot.classification.confidence * 100)
     rows = "".join(
         _classification_row(label, value)
-        for label, value in _classification_breakdown(snapshot.classification.label, confidence).items()
+        for label, value in _classification_breakdown(snapshot.classification.label, confidence, snapshot.classification.scores).items()
     )
     return f"""
     <div class="panel">
@@ -1173,18 +1353,20 @@ def _classification_html(snapshot) -> str:
             <span class="detected-badge">Detected</span>
         </div>
         {rows}
-        <div class="small-muted" style="margin-top:8px;">Model: YAMNet | Confidence Threshold: 0.50</div>
+        <div class="small-muted" style="margin-top:8px;">Model: YAMNet | Normalized tracked-category mix</div>
     </div>
     """
 
 
 def _classification_row(label: str, value: int) -> str:
+    display_value = f"{value}%" if value > 0 else "--"
+    opacity = "1" if value > 0 else ".48"
     return f"""
-    <div class="classification-row">
+    <div class="classification-row" style="opacity:{opacity};">
         <span class="row-label">{_icon(_classification_icon(label), 13)}{html.escape(label)}</span>
         <div>
             <div class="bar-track"><div class="bar-fill" style="width:{value}%;"></div></div>
-            <div class="percent">{value}%</div>
+            <div class="percent">{display_value}</div>
         </div>
     </div>
     """
@@ -1192,10 +1374,11 @@ def _classification_row(label: str, value: int) -> str:
 
 def _transcript_html(snapshot) -> str:
     text = snapshot.transcript.text or "No speech detected yet."
+    rendered_text = "<br>".join(html.escape(line) for line in text.splitlines())
     return f"""
     <div class="panel">
         {_panel_title("Transcription", live=True, icon="message")}
-        <div class="transcript-box">{html.escape(text)}</div>
+        <div class="transcript-box">{rendered_text}</div>
         <div class="auto-scroll"><span class="purple">●</span> Auto Scroll</div>
     </div>
     """
@@ -1292,21 +1475,44 @@ def _icon(name: str | None, size: int = 16) -> str:
     )
 
 
-def _classification_breakdown(active_label: NoiseLabel, confidence: int) -> dict[str, int]:
-    rows = {"Keyboard Typing": 8, "Speech": 18, "Background Noise": 6, "Silence": 2, "Clap": 1}
-    if active_label == NoiseLabel.TYPING:
-        rows["Keyboard Typing"] = confidence
-    elif active_label == NoiseLabel.SILENCE:
-        rows["Silence"] = confidence
-        rows["Speech"] = 3
-    elif active_label == NoiseLabel.SPEECH:
-        rows["Speech"] = confidence
-        rows["Keyboard Typing"] = 4
-    elif active_label == NoiseLabel.BACKGROUND_NOISE:
-        rows["Background Noise"] = confidence
-    elif active_label == NoiseLabel.CLAP:
-        rows["Clap"] = confidence
+def _classification_breakdown(
+    active_label: NoiseLabel,
+    confidence: int,
+    scores: dict[str, float] | None = None,
+) -> dict[str, int]:
+    labels = {
+        "Keyboard Typing": NoiseLabel.TYPING.value,
+        "Speech": NoiseLabel.SPEECH.value,
+        "Background Noise": NoiseLabel.BACKGROUND_NOISE.value,
+        "Silence": NoiseLabel.SILENCE.value,
+        "Clap": NoiseLabel.CLAP.value,
+    }
+    if scores and any(float(scores.get(key, 0.0)) > 0.0 for key in labels.values()):
+        values = [float(scores.get(key, 0.0)) for key in labels.values()]
+        percentages = _integer_percentages(values)
+        return {label: percentages[index] for index, label in enumerate(labels)}
+
+    confidence = max(0, min(100, confidence))
+    rows = {label: 0 for label in labels}
+    for display_label, key in labels.items():
+        if active_label.value == key:
+            rows[display_label] = confidence
+            break
     return rows
+
+
+def _integer_percentages(values: list[float]) -> list[int]:
+    clean_values = [max(0.0, float(value)) for value in values]
+    total = sum(clean_values)
+    if total <= 0.0:
+        return [0 for _ in clean_values]
+    scaled = [value / total * 100.0 for value in clean_values]
+    base = [int(value) for value in scaled]
+    remainder = 100 - sum(base)
+    order = sorted(range(len(scaled)), key=lambda index: scaled[index] - base[index], reverse=True)
+    for index in order[:remainder]:
+        base[index] += 1
+    return base
 
 
 def _recommendations(snapshot) -> list[str]:
