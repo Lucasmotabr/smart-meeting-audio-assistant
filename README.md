@@ -2,6 +2,10 @@
 
 Real-time microphone dashboard for a class project about how microphone quality, noise, and recording conditions affect speech recognition robustness.
 
+![Smart Meeting Audio Assistant dashboard](docs/images/dashboard.png)
+
+*Streamlit dashboard in mock mode — waveform, spectrogram, voice activity, noise classification, transcript, and audio-quality advice.*
+
 ## Goal
 
 Build a GUI-first integration shell that can receive outputs from the rest of the team:
